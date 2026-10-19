@@ -1,35 +1,27 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <defs>
-    <linearGradient id="forestGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#064e3b" />
-      <stop offset="100%" stop-color="#043b2c" />
-    </linearGradient>
-    <linearGradient id="emeraldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#6ee7b7" />
-      <stop offset="100%" stop-color="#10b981" />
-    </linearGradient>
+    <filter id="subtleShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#1b3626" flood-opacity="0.25" />
+    </filter>
   </defs>
-  <rect width="512" height="512" rx="112" fill="url(#forestGrad)" />
-  <rect x="24" y="24" width="464" height="464" rx="88" fill="none" stroke="#6ee7b7" stroke-width="6" stroke-opacity="0.25" />
-  
-  <!-- Stationery & Print Icon: Stylized Paper Sheet & Pen Nib -->
-  <g transform="translate(116, 96)">
-    <!-- Paper Sheet -->
-    <rect x="20" y="20" width="180" height="240" rx="16" fill="#fdfbf7" stroke="#6ee7b7" stroke-width="8"/>
-    <!-- Paper Lines -->
-    <line x1="50" y1="70" x2="170" y2="70" stroke="#064e3b" stroke-width="8" stroke-linecap="round" />
-    <line x1="50" y1="110" x2="170" y2="110" stroke="#064e3b" stroke-width="8" stroke-linecap="round" />
-    <line x1="50" y1="150" x2="130" y2="150" stroke="#064e3b" stroke-width="8" stroke-linecap="round" />
-    
-    <!-- Pen Nib / Printing Nib crossing diagonally -->
-    <g transform="translate(140, 140) rotate(45)">
-      <path d="M0 0 L40 -70 L80 0 L60 90 L20 90 Z" fill="url(#emeraldGrad)" stroke="#043b2c" stroke-width="6" />
-      <circle cx="40" cy="-10" r="8" fill="#043b2c" />
-      <line x1="40" y1="-10" x2="40" y2="-70" stroke="#043b2c" stroke-width="5" />
-    </g>
-    
-    <!-- Sappy Stationary letter 'S' seal -->
-    <circle cx="90" cy="210" r="28" fill="#064e3b" />
-    <text x="90" y="222" font-family="'Plus Jakarta Sans', sans-serif" font-weight="900" font-size="34" fill="#6ee7b7" text-anchor="middle">S</text>
+
+  <!-- Clean background for app icons / favicon -->
+  <rect width="512" height="512" rx="108" fill="#fbf9f4" />
+
+  <g stroke="#244834" fill="none" stroke-width="26" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Outer Emblem Circle -->
+    <circle cx="256" cy="256" r="192" />
+
+    <!-- Downward Pen Nib / V Geometry meeting at bottom -->
+    <path d="M 188 92 L 256 448 L 324 92" />
+
+    <!-- Floating Top Center Ink Droplet Dot -->
+    <circle cx="256" cy="164" r="17" fill="#244834" stroke="none" />
+
+    <!-- The Fluid 'S' Ribbon crossing horizontally through center -->
+    <path d="M 160 162 C 160 216, 204 246, 256 246 L 316 246 C 362 246, 384 278, 350 342" />
+
+    <!-- 'P' Loop connecting from center line back into the right leg of V -->
+    <path d="M 316 246 C 316 294, 286 318, 272 344" />
   </g>
 </svg>

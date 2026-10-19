@@ -19,6 +19,7 @@ import {
 import {Staff, StoreSettings} from '../../types';
 import {storage} from '../../services/storage';
 import {PWAInstallBadge} from '../common/PWAInstallBadge';
+import {SappyBrandLogo} from '../common/SappyBrandLogo';
 
 interface NavbarProps {
   currentStaff: Staff;
@@ -102,15 +103,15 @@ export const Navbar: React.FC<NavbarProps> = ({
     <header className="sticky top-0 z-30 h-14 bg-white dark:bg-[#1c1815] border-b border-[#e6dfd5] dark:border-[#362e26] px-3 sm:px-4 flex items-center justify-between">
       {/* Brand & Tagline */}
       <div className="flex items-center gap-3">
-        <div className="w-8 h-8 rounded-lg bg-[#064e3b] text-[#6ee7b7] flex items-center justify-center font-black text-lg shadow-sm">
-          S
+        <div className="w-9 h-9 rounded-xl bg-[#fbf9f4] dark:bg-[#25201b] border border-[#e6dfd5] dark:border-[#362e26] text-[#244834] dark:text-[#6ee7b7] flex items-center justify-center shadow-xs">
+          <SappyBrandLogo size="sm" className="text-[#244834] dark:text-[#6ee7b7]" />
         </div>
         <div>
           <div className="flex items-center gap-1.5">
-            <h1 className="font-extrabold text-sm sm:text-base tracking-tight text-[#064e3b] dark:text-[#6ee7b7]">
+            <h1 className="font-extrabold text-sm sm:text-base tracking-widest text-[#244834] dark:text-[#6ee7b7]">
               {settings.storeName}
             </h1>
-            <span className="hidden md:inline-block text-[11px] font-medium text-stone-500 dark:text-stone-400 italic">
+            <span className="hidden md:inline-block text-[11px] font-serif text-stone-500 dark:text-stone-400 italic">
               — {settings.tagline}
             </span>
           </div>

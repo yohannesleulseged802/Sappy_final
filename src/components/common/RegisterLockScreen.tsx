@@ -3,6 +3,7 @@ import {Lock, Delete, UserCheck, ArrowRight, AlertCircle, LogOut} from 'lucide-r
 import {Staff} from '../../types';
 import {storage} from '../../services/storage';
 import {sound} from '../../services/sound';
+import {SappyBrandLogo} from './SappyBrandLogo';
 
 interface RegisterLockScreenProps {
   currentStaff: Staff;
@@ -70,14 +71,17 @@ export const RegisterLockScreen: React.FC<RegisterLockScreenProps> = ({
       <div className="w-full max-w-sm bg-stone-900 border border-stone-800 rounded-3xl shadow-2xl p-6 text-center space-y-5">
         {/* Brand Logo & Lock Icon */}
         <div className="flex flex-col items-center">
-          <div className="w-14 h-14 rounded-2xl bg-[#064e3b] text-[#6ee7b7] flex items-center justify-center mb-3 shadow-lg border border-emerald-500/20">
-            <Lock className="w-7 h-7" />
+          <div className="w-16 h-16 rounded-2xl bg-[#fbf9f4] text-[#244834] flex items-center justify-center mb-3 shadow-xl border border-white/20 p-2 relative">
+            <SappyBrandLogo size="lg" className="text-[#244834]" />
+            <div className="absolute -bottom-1 -right-1 p-1 rounded-full bg-stone-900 border border-stone-700 text-amber-400 shadow-sm">
+              <Lock className="w-3 h-3" />
+            </div>
           </div>
-          <h2 className="font-extrabold text-lg tracking-tight text-white">
-            Sappy Stationary
+          <h2 className="font-extrabold text-lg tracking-widest text-white font-sans">
+            SAPPY
           </h2>
-          <p className="text-xs text-emerald-400 font-bold uppercase tracking-wider mt-0.5">
-            Register Locked
+          <p className="text-[11px] font-serif text-[#6ee7b7] italic tracking-wide mt-0.5">
+            stationery &amp; printing.
           </p>
         </div>
 

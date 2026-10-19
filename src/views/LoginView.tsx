@@ -36,6 +36,7 @@ import {sound} from '../services/sound';
 import {authService, RegisterStaffPayload} from '../services/authService';
 import {ForgotPasswordModal} from '../components/common/ForgotPasswordModal';
 import {MasterPasscodeSignupModal} from '../components/common/MasterPasscodeSignupModal';
+import {SappyBrandLogo} from '../components/common/SappyBrandLogo';
 
 const AVATAR_PRESETS = [
   'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=256&h=256&q=80',
@@ -461,13 +462,15 @@ export const LoginView: React.FC<LoginViewProps> = ({onLoginSuccess, isOnline}) 
 
             <div>
               {/* Brand Logo & Wordmark */}
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-12 h-12 rounded-2xl bg-[#6ee7b7] text-[#064e3b] flex items-center justify-center font-black text-2xl shadow-lg">
-                  S
+              <div className="flex items-center gap-3.5 mb-6">
+                <div className="w-14 h-14 rounded-2xl bg-[#fbf9f4] text-[#244834] flex items-center justify-center shadow-xl border border-white/20 p-1.5 shrink-0">
+                  <SappyBrandLogo size="lg" className="text-[#244834]" />
                 </div>
                 <div>
-                  <h1 className="text-2xl font-extrabold tracking-tight">Sappy Stationary</h1>
-                  <p className="text-xs text-[#6ee7b7] font-medium tracking-wide">
+                  <h1 className="text-2xl sm:text-3xl font-extrabold tracking-widest leading-none font-sans">
+                    SAPPY
+                  </h1>
+                  <p className="text-xs sm:text-sm text-[#a7f3d0] font-serif italic tracking-wide mt-1">
                     stationery &amp; printing.
                   </p>
                 </div>
