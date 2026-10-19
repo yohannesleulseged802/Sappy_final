@@ -1730,7 +1730,7 @@ class StorageService {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          masterPasscode: masterPasscode || 'Sappy@1313',
+          masterPasscode: masterPasscode || 'Sappy#1313',
           forceReset: true,
         }),
       });

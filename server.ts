@@ -30,7 +30,7 @@ const PORT = getTargetPort();
 const app = express();
 
 // Master Passcode kept securely on server only (Requirement #3)
-const MASTER_PASSCODE = process.env.MASTER_PASSCODE || 'Sappy@1313';
+const MASTER_PASSCODE = process.env.MASTER_PASSCODE || 'Sappy#1313';
 const MAX_PASSCODE_ATTEMPTS = 5;
 const LOCKOUT_DURATION_MS = 60000; // 60 seconds
 

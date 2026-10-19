@@ -407,7 +407,7 @@ export const SignupView: React.FC<SignupViewProps> = ({
                       Master Passcode *
                     </label>
                     <span className="text-[11px] text-stone-400 font-mono">
-                      Passcode: <code className="bg-emerald-50 dark:bg-stone-800 px-1 py-0.5 rounded text-[#064e3b] dark:text-[#6ee7b7] font-bold">Sappy@1313</code>
+                      Passcode: <code className="bg-emerald-50 dark:bg-stone-800 px-1 py-0.5 rounded text-[#064e3b] dark:text-[#6ee7b7] font-bold">Sappy#1313</code>
                     </span>
                   </div>
 

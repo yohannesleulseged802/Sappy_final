@@ -731,14 +731,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     <KeyRound className="w-3.5 h-3.5 text-rose-600" />
                     <span>Enter Master Passcode to Authorize Reset</span>
                   </span>
-                  <span className="text-[10px] text-stone-500 font-mono">Default: Sappy@1313</span>
+                  <span className="text-[10px] text-stone-500 font-mono">Default: Sappy#1313</span>
                 </label>
                 <div className="relative">
                   <input
                     type={showResetPasscode ? 'text' : 'password'}
                     value={factoryResetPasscode}
                     onChange={(e) => setFactoryResetPasscode(e.target.value)}
-                    placeholder="Enter Master Passcode (Sappy@1313)"
+                    placeholder="Enter Master Passcode (Sappy#1313)"
                     disabled={isExecutingFactoryReset}
                     className="w-full bg-stone-50 dark:bg-stone-800 border border-stone-300 dark:border-stone-700 rounded-xl p-2.5 text-xs font-mono font-bold pr-10 focus:ring-2 focus:ring-rose-500 focus:outline-hidden"
                   />

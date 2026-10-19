@@ -1386,14 +1386,14 @@ export const LoginView: React.FC<LoginViewProps> = ({onLoginSuccess, isOnline}) 
             <div>
               <label className="block text-xs font-bold text-stone-700 dark:text-stone-300 mb-1.5 flex items-center justify-between">
                 <span>Enter Master Passcode to Authorize:</span>
-                <span className="text-[10px] text-stone-400 font-mono">Default: Sappy@1313</span>
+                <span className="text-[10px] text-stone-400 font-mono">Default: Sappy#1313</span>
               </label>
               <div className="relative">
                 <input
                   type={showEmergencyPasscode ? 'text' : 'password'}
                   value={emergencyPasscode}
                   onChange={(e) => setEmergencyPasscode(e.target.value)}
-                  placeholder="Master Passcode (Sappy@1313)"
+                  placeholder="Master Passcode (Sappy#1313)"
                   disabled={isExecutingEmergencyReset}
                   className="w-full bg-stone-50 dark:bg-stone-800 border border-stone-300 dark:border-stone-700 rounded-xl p-2.5 text-xs font-mono font-bold pr-10 focus:ring-2 focus:ring-rose-500 focus:outline-hidden"
                 />
