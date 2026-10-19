@@ -1,0 +1,79 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.accountStatus == 'approved'
+      );
+    }
+
+    // System initialization metadata
+    match /system/{metaId} {
+      allow read: if true;
+      allow write: if isAdmin() || !exists(/databases/$(database)/documents/system/setup);
+    }
+
+    // Users collection
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      allow create: if isAuthenticated() && (
+        (isOwner(userId) && request.resource.data.accountStatus in ['pending', 'approved']) || isAdmin()
+      );
+      allow update: if isAuthenticated() && (
+        isAdmin() ||
+        (isOwner(userId) &&
+          request.resource.data.role == resource.data.role &&
+          request.resource.data.accountStatus == resource.data.accountStatus)
+      );
+      allow delete: if isAdmin() || !exists(/databases/$(database)/documents/system/setup);
+    }
+
+    // Products catalog (accessible to store terminals)
+    match /products/{productId} {
+      allow read: if true;
+      allow write, delete: if isAuthenticated() || !exists(/databases/$(database)/documents/system/setup);
+    }
+
+    // Sales ledger & receipts
+    match /sales/{saleId} {
+      allow read, write, delete: if isAuthenticated() || !exists(/databases/$(database)/documents/system/setup);
+    }
+
+    // Customers and loyalty
+    match /customers/{customerId} {
+      allow read, write, delete: if isAuthenticated() || !exists(/databases/$(database)/documents/system/setup);
+    }
+
+    // Expenses
+    match /expenses/{expenseId} {
+      allow read, write, delete: if isAuthenticated() || !exists(/databases/$(database)/documents/system/setup);
+    }
+
+    // Credit transactions
+    match /credit_transactions/{txId} {
+      allow read, write, delete: if isAuthenticated() || !exists(/databases/$(database)/documents/system/setup);
+    }
+
+    // Audit logs
+    match /audit_logs/{logId} {
+      allow read, write, delete: if isAuthenticated() || !exists(/databases/$(database)/documents/system/setup);
+    }
+
+    // Settings
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write, delete: if isAuthenticated() || !exists(/databases/$(database)/documents/system/setup);
+    }
+  }
+}

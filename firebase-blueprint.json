@@ -1,0 +1,54 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Store staff account profile and authorization details",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Unique Firebase Authentication UID" },
+        "employeeId": { "type": "string", "description": "Unique store employee identification code" },
+        "firstName": { "type": "string", "description": "Staff first name" },
+        "lastName": { "type": "string", "description": "Staff last name" },
+        "fullName": { "type": "string", "description": "Full display name" },
+        "username": { "type": "string", "description": "Unique login username" },
+        "email": { "type": "string", "format": "email", "description": "Staff email address" },
+        "phone": { "type": "string", "description": "Contact phone number" },
+        "address": { "type": "string", "description": "Physical address" },
+        "city": { "type": "string", "description": "City or town" },
+        "profilePictureUrl": { "type": "string", "description": "Permanent profile picture storage URL" },
+        "jobTitle": { "type": "string", "description": "Designated job title" },
+        "department": { "type": "string", "description": "Store department" },
+        "role": { "type": "string", "enum": ["admin", "manager", "cashier", "auditor"], "description": "RBAC user role" },
+        "accountStatus": { "type": "string", "enum": ["approved", "pending", "rejected", "disabled"], "description": "Account lifecycle status" },
+        "active": { "type": "boolean", "description": "Whether account is currently active" },
+        "pin": { "type": "string", "description": "4-digit quick terminal switcher PIN" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "approvedAt": { "type": "string", "format": "date-time" },
+        "approvedBy": { "type": "string" }
+      },
+      "required": ["uid", "employeeId", "firstName", "lastName", "fullName", "username", "email", "role", "accountStatus", "active", "createdAt"]
+    },
+    "SystemMeta": {
+      "title": "SystemMeta",
+      "description": "System initialization metadata",
+      "type": "object",
+      "properties": {
+        "isInitialized": { "type": "boolean", "description": "Whether the primary admin has been initialized" },
+        "initializedAt": { "type": "string", "format": "date-time" },
+        "initialAdminUid": { "type": "string" }
+      },
+      "required": ["isInitialized"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Registered store staff and personnel profiles"
+    },
+    "/system/{metaId}": {
+      "schema": "SystemMeta",
+      "description": "Protected system initialization records"
+    }
+  }
+}

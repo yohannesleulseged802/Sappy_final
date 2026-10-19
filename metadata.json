@@ -1,0 +1,6 @@
+{
+  "name": "Sappy Stationary - POS & Inventory System",
+  "description": "Production-grade offline-first Point of Sale, Inventory, Barcode & QR Code Management, Credit, and Reporting system for Sappy Stationary (stationery & printing).",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
