@@ -24,6 +24,7 @@ import {
 import { Staff, StaffRole } from '../types';
 import { storage } from '../services/storage';
 import { sound } from '../services/sound';
+import { authService } from '../services/authService';
 import { MasterPasscodeSignupModal } from '../components/common/MasterPasscodeSignupModal';
 
 interface StaffViewProps {
@@ -195,16 +196,11 @@ export const StaffView: React.FC<StaffViewProps> = ({
     setIsExecutingReset(true);
     setResetError(null);
     try {
-      const verifyRes = await fetch('/api/auth/verify-passcode', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ passcode: resetPasscode.trim() }),
-      });
-      const verifyData = await verifyRes.json();
-      if (!verifyRes.ok || !verifyData.valid) {
+      const result = await authService.verifyMasterPasscode(resetPasscode.trim());
+      if (!result.valid) {
         setIsExecutingReset(false);
         sound.playError();
-        setResetError(verifyData.error || 'Incorrect Master Passcode.');
+        setResetError(result.error || 'Incorrect Master Passcode.');
         return;
       }
 
