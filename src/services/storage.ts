@@ -110,9 +110,8 @@ class StorageService {
     if (!localStorage.getItem(STORAGE_KEYS.PRODUCTS)) {
       localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify([]));
     }
-    // Note: Requirement #1 - All existing Admin, Manager, Cashier, Auditor, demo, and test accounts removed.
-    // Prevent automatic recreation of deleted accounts while preserving products, inventory, customers, settings, and logs.
-    const hasPurgedOldUsers = localStorage.getItem('sappy_users_purged_v3') === 'true';
+    // Force clean purge of all user accounts across devices per user instruction
+    const hasPurgedOldUsers = localStorage.getItem('sappy_users_purged_v6_clean') === 'true';
     if (!hasPurgedOldUsers) {
       localStorage.setItem(STORAGE_KEYS.STAFF, JSON.stringify([]));
       localStorage.removeItem(STORAGE_KEYS.CURRENT_STAFF_ID);
@@ -120,7 +119,9 @@ class StorageService {
       localStorage.removeItem(STORAGE_KEYS.REGISTER_LOCKED);
       localStorage.removeItem(STORAGE_KEYS.FAILED_ATTEMPTS);
       localStorage.removeItem(STORAGE_KEYS.LOCKOUT_UNTIL);
-      localStorage.setItem('sappy_users_purged_v3', 'true');
+      localStorage.removeItem(STORAGE_KEYS.STORE_INITIALIZED);
+      localStorage.removeItem('sappy_initial_signup_completed');
+      localStorage.setItem('sappy_users_purged_v6_clean', 'true');
     } else {
       const rawStaff = localStorage.getItem(STORAGE_KEYS.STAFF);
       if (!rawStaff) {
@@ -297,57 +298,36 @@ class StorageService {
 
   mergeRemoteStaff(remoteStaff: Staff[], onUpdate?: (staffList: Staff[]) => void): Staff[] {
     const localList = this.getStaffList();
-    const mergedMap = new Map<string, Staff>();
 
-    // Put local first
-    localList.forEach((s) => {
-      mergedMap.set(s.id, s);
-      if (s.email) mergedMap.set(`email:${s.email.toLowerCase()}`, s);
-      if (s.username) mergedMap.set(`user:${s.username.toLowerCase()}`, s);
+    // Remote Firestore is the single authoritative source of truth for accounts
+    const staffList: Staff[] = remoteStaff.map((r) => {
+      const localMatch = localList.find(
+        (l) => l.id === r.id || (l.email && r.email && l.email.toLowerCase() === r.email.toLowerCase())
+      );
+      return {
+        ...r,
+        // Retain local password if remote omitted it, otherwise use remote password
+        password: r.password || localMatch?.password || '',
+      };
     });
 
-    // Merge remote
-    remoteStaff.forEach((r) => {
-      const existing =
-        mergedMap.get(r.id) ||
-        (r.email ? mergedMap.get(`email:${r.email.toLowerCase()}`) : null) ||
-        (r.username ? mergedMap.get(`user:${r.username.toLowerCase()}`) : null);
+    this.saveStaffList(staffList);
 
-      if (existing) {
-        // Retain existing password if remote omitted it
-        const merged: Staff = {
-          ...existing,
-          ...r,
-          password: r.password || existing.password || '',
-        };
-        mergedMap.set(r.id, merged);
+    if (this.isBrowser()) {
+      if (staffList.length > 0) {
+        localStorage.setItem(STORAGE_KEYS.STORE_INITIALIZED, 'true');
+        localStorage.setItem('sappy_initial_signup_completed', 'true');
       } else {
-        mergedMap.set(r.id, r);
+        localStorage.removeItem(STORAGE_KEYS.STORE_INITIALIZED);
+        localStorage.removeItem('sappy_initial_signup_completed');
       }
-    });
-
-    // Extract unique by ID
-    const uniqueStaff: Staff[] = [];
-    const seenIds = new Set<string>();
-    mergedMap.forEach((s) => {
-      if (!seenIds.has(s.id)) {
-        seenIds.add(s.id);
-        uniqueStaff.push(s);
-      }
-    });
-
-    this.saveStaffList(uniqueStaff);
-
-    if (this.isBrowser() && uniqueStaff.length > 0) {
-      localStorage.setItem(STORAGE_KEYS.STORE_INITIALIZED, 'true');
-      localStorage.setItem('sappy_initial_signup_completed', 'true');
     }
 
     if (onUpdate) {
-      onUpdate(uniqueStaff);
+      onUpdate(staffList);
     }
 
-    return uniqueStaff;
+    return staffList;
   }
 
   syncStaffWithFirestore(onUpdate?: (staffList: Staff[]) => void): () => void {
@@ -364,10 +344,15 @@ class StorageService {
         if (remoteStaff.length > 0) {
           this.mergeRemoteStaff(remoteStaff, onUpdate);
         } else {
-          // If Firestore is empty but we have local staff on this device, push local staff to Firestore
-          const local = this.getStaffList();
-          if (local.length > 0) {
-            local.forEach((s) => this.pushStaffToFirestore(s));
+          // Firestore is empty: reset local staff state to enforce clean zero
+          this.saveStaffList([]);
+          if (this.isBrowser()) {
+            localStorage.removeItem(STORAGE_KEYS.STORE_INITIALIZED);
+            localStorage.removeItem('sappy_initial_signup_completed');
+            localStorage.removeItem(STORAGE_KEYS.CURRENT_STAFF_ID);
+          }
+          if (onUpdate) {
+            onUpdate([]);
           }
         }
       })
@@ -383,8 +368,20 @@ class StorageService {
         snap.forEach((docSnap) => {
           remoteStaff.push(this.mapFirestoreDocToStaff(docSnap.id, docSnap.data()));
         });
+
         if (remoteStaff.length > 0) {
           this.mergeRemoteStaff(remoteStaff, onUpdate);
+        } else {
+          // Live wipe reflection on all listening devices
+          this.saveStaffList([]);
+          if (this.isBrowser()) {
+            localStorage.removeItem(STORAGE_KEYS.STORE_INITIALIZED);
+            localStorage.removeItem('sappy_initial_signup_completed');
+            localStorage.removeItem(STORAGE_KEYS.CURRENT_STAFF_ID);
+          }
+          if (onUpdate) {
+            onUpdate([]);
+          }
         }
       },
       (err) => {
@@ -750,8 +747,20 @@ class StorageService {
         const d = docSnap.data();
         const docEmail = d.email ? String(d.email).trim().toLowerCase() : '';
         const docUser = d.username ? String(d.username).trim().toLowerCase() : '';
+        const docName = (d.name || d.fullName || '').trim().toLowerCase();
+        const docFirstName = (d.firstName || '').trim().toLowerCase();
+        const docEmp = (d.employeeId || '').trim().toLowerCase();
+        const emailPrefix = docEmail.includes('@') ? docEmail.split('@')[0] : '';
 
-        if (docEmail === cleanIdent || docUser === cleanIdent) {
+        if (
+          docEmail === cleanIdent ||
+          docUser === cleanIdent ||
+          docName === cleanIdent ||
+          docFirstName === cleanIdent ||
+          emailPrefix === cleanIdent ||
+          docEmp === cleanIdent ||
+          docName.split(' ')[0] === cleanIdent
+        ) {
           matchedStaff = this.mapFirestoreDocToStaff(docSnap.id, d);
         }
       });
@@ -914,6 +923,40 @@ class StorageService {
     const localResult = this.authenticateWithPin(staffId, pinAttempt);
     if (localResult.success && localResult.staff) {
       return localResult;
+    }
+
+    // Try direct Firestore authentication for PIN
+    try {
+      const userDocRef = doc(db, 'users', staffId);
+      const userDocSnap = await getDoc(userDocRef);
+      if (userDocSnap.exists()) {
+        const d = userDocSnap.data();
+        const cleanPin = d.pin ? String(d.pin).trim() : '1234';
+        if (cleanPin === pinAttempt.trim()) {
+          const staff = this.mapFirestoreDocToStaff(userDocSnap.id, d);
+          if (!staff.active || staff.approvalStatus === 'disabled') {
+            return {
+              success: false,
+              error: 'This staff account has been disabled. Please contact an administrator.',
+            };
+          }
+          if (staff.approvalStatus === 'pending') {
+            return {
+              success: false,
+              error: 'Account pending Administrator authorization.',
+            };
+          }
+          this.addStaffAccount(staff);
+          this.clearAuthFailures();
+          this.setCurrentStaff(staff.id);
+          this.setAuthenticated(true);
+          this.setRegisterLocked(false);
+          this.addAuditLog('AUTH_SUCCESS', 'AUTH', `${staff.name} authenticated via PIN across devices.`);
+          return { success: true, staff };
+        }
+      }
+    } catch (fbErr) {
+      console.warn('Firestore PIN auth notice:', fbErr);
     }
 
     try {

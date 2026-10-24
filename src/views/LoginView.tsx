@@ -65,9 +65,10 @@ export const LoginView: React.FC<LoginViewProps> = ({onLoginSuccess, isOnline}) 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Fast Cashier PIN State
-  const [staffVersion, setStaffVersion] = useState(0);
-  const staffList = storage.getStaffList().filter((s) => s.active && s.approvalStatus !== 'pending');
-  const [selectedStaffId, setSelectedStaffId] = useState<string>(staffList[0]?.id || '');
+  const [staffList, setStaffList] = useState<Staff[]>(() =>
+    storage.getStaffList().filter((s) => s.active && s.approvalStatus !== 'pending')
+  );
+  const [selectedStaffId, setSelectedStaffId] = useState<string>(() => staffList[0]?.id || '');
   const [pin, setPin] = useState('');
 
   // Lockout & Error State (Requirement #37 Failed Login Protection)
@@ -145,13 +146,13 @@ export const LoginView: React.FC<LoginViewProps> = ({onLoginSuccess, isOnline}) 
     // 1. Live synchronization with Cloud Firestore users collection
     const unsubscribeFirestore = storage.syncStaffWithFirestore((syncedList) => {
       if (!isMounted) return;
-      if (syncedList.length > 0) {
-        setStaffVersion((v) => v + 1);
-        const activeOne = syncedList.find((s) => s.active && s.approvalStatus !== 'pending');
-        if (activeOne) {
-          setUsername((prev) => prev || activeOne.email || activeOne.username || '');
-          setSelectedStaffId((prev) => prev || activeOne.id);
-        }
+      const activeStaff = syncedList.filter((s) => s.active && s.approvalStatus !== 'pending');
+      setStaffList(activeStaff);
+      if (activeStaff.length > 0) {
+        setSelectedStaffId((prev) => (prev && activeStaff.some((s) => s.id === prev) ? prev : activeStaff[0].id));
+        setUsername((prev) => prev || activeStaff[0].email || activeStaff[0].username || '');
+      } else {
+        setSelectedStaffId('');
       }
     });
 
@@ -159,12 +160,10 @@ export const LoginView: React.FC<LoginViewProps> = ({onLoginSuccess, isOnline}) 
     storage.syncStaffFromBackend().then((res) => {
       if (!isMounted) return;
       if (res.staffList.length > 0) {
-        setStaffVersion((v) => v + 1);
-        const activeOne = res.staffList.find((s) => s.active && s.approvalStatus !== 'pending');
-        if (activeOne) {
-          setUsername((prev) => prev || activeOne.email || activeOne.username || '');
-          setSelectedStaffId((prev) => prev || activeOne.id);
-        }
+        const activeStaff = res.staffList.filter((s) => s.active && s.approvalStatus !== 'pending');
+        setStaffList(activeStaff);
+        setSelectedStaffId((prev) => (prev && activeStaff.some((s) => s.id === prev) ? prev : activeStaff[0].id));
+        setUsername((prev) => prev || activeStaff[0].email || activeStaff[0].username || '');
       }
     });
 
@@ -276,11 +275,15 @@ export const LoginView: React.FC<LoginViewProps> = ({onLoginSuccess, isOnline}) 
   // --- Submit Cashier PIN ---
   const handlePinSubmit = async (pinToVerify: string) => {
     if (lockoutSeconds > 0) return;
-    if (!selectedStaffId) return;
+    const targetId = selectedStaffId || staffList[0]?.id;
+    if (!targetId) {
+      registerFailedAttempt('No staff account selected. Please select a staff profile.');
+      return;
+    }
 
     setErrorMessage(null);
     setSuccessMessage(null);
-    const result = await storage.authenticateWithPinAsync(selectedStaffId, pinToVerify);
+    const result = await storage.authenticateWithPinAsync(targetId, pinToVerify);
 
     if (!result.success || !result.staff) {
       setPin('');
@@ -309,7 +312,7 @@ export const LoginView: React.FC<LoginViewProps> = ({onLoginSuccess, isOnline}) 
   const handleSignupSuccess = (newStaff: Staff, isApprovedByPasscode: boolean) => {
     storage.setStoreInitialized(true);
     localStorage.setItem('sappy_initial_signup_completed', 'true');
-    setStaffVersion((v) => v + 1);
+    setStaffList(storage.getStaffList().filter((s) => s.active && s.approvalStatus !== 'pending'));
     setActiveAuthTab('signin');
     if (isApprovedByPasscode || newStaff.approvalStatus === 'approved') {
       const dest = getDestinationForRole(newStaff.role);
@@ -782,39 +785,45 @@ export const LoginView: React.FC<LoginViewProps> = ({onLoginSuccess, isOnline}) 
                           <label className="block text-xs font-semibold mb-1.5 text-stone-700 dark:text-stone-300">
                             Select Staff Member
                           </label>
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                            {staffList.map((s) => {
-                              const isSelected = selectedStaffId === s.id;
-                              return (
-                                <button
-                                  key={s.id}
-                                  type="button"
-                                  onClick={() => {
-                                    setSelectedStaffId(s.id);
-                                    setPin('');
-                                    setErrorMessage(null);
-                                  }}
-                                  className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
-                                    isSelected
-                                      ? 'border-[#064e3b] bg-emerald-50 dark:bg-emerald-950/60 shadow-xs ring-2 ring-[#064e3b]/20'
-                                      : 'border-stone-200 dark:border-stone-800 hover:bg-stone-50 dark:hover:bg-stone-800'
-                                  }`}
-                                >
-                                  <div className="flex items-center gap-1.5 mb-1">
-                                    <div className="w-5 h-5 rounded-full bg-[#064e3b] text-white text-[10px] font-bold flex items-center justify-center">
-                                      {s.name.charAt(0)}
+                          {staffList.length === 0 ? (
+                            <div className="p-3 bg-stone-100 dark:bg-stone-800/80 rounded-xl text-center text-xs text-stone-500">
+                              No staff profiles found. Please switch to Password login or click <button type="button" onClick={() => setActiveAuthTab('signup')} className="font-bold underline text-[#064e3b] dark:text-[#6ee7b7] cursor-pointer">Create Account</button>.
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                              {staffList.map((s) => {
+                                const isSelected = selectedStaffId === s.id;
+                                return (
+                                  <button
+                                    key={s.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedStaffId(s.id);
+                                      setPin('');
+                                      setErrorMessage(null);
+                                    }}
+                                    className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
+                                      isSelected
+                                        ? 'border-[#064e3b] bg-emerald-50 dark:bg-emerald-950/60 shadow-xs ring-2 ring-[#064e3b]/20'
+                                        : 'border-stone-200 dark:border-stone-800 hover:bg-stone-50 dark:hover:bg-stone-800'
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-1.5 mb-1">
+                                      <div className="w-5 h-5 rounded-full bg-[#064e3b] text-white text-[10px] font-bold flex items-center justify-center">
+                                        {s.name.charAt(0)}
+                                      </div>
+                                      <span className="font-bold text-xs truncate">
+                                        {s.name.split(' ')[0]}
+                                      </span>
                                     </div>
-                                    <span className="font-bold text-xs truncate">
-                                      {s.name.split(' ')[0]}
+                                    <span className="text-[9px] uppercase font-bold text-stone-400 block font-mono">
+                                      {s.role}
                                     </span>
-                                  </div>
-                                  <span className="text-[9px] uppercase font-bold text-stone-400 block font-mono">
-                                    {s.role}
-                                  </span>
-                                </button>
-                              );
-                            })}
-                          </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
 
                         {/* Masked PIN Indicators (● ● ● ●) */}

@@ -26,6 +26,8 @@ import {
   ListPlus,
   FileDown,
   Sparkles,
+  ChevronDown,
+  Loader2,
 } from 'lucide-react';
 import {Product, ProductCode, StockMovementType, StoreSettings, Staff, LabelItem, CodeType} from '../types';
 import {storage} from '../services/storage';
@@ -81,10 +83,18 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const [stockOpQty, setStockOpQty] = useState<number>(10);
   const [stockOpReason, setStockOpReason] = useState<string>('Restock from supplier');
 
-  // CSV Import Modal
+  // Excel / CSV Import Modal State
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [importPreviewRows, setImportPreviewRows] = useState<any[]>([]);
   const [importErrors, setImportErrors] = useState<any[]>([]);
+  const [importFileInfo, setImportFileInfo] = useState<{
+    name: string;
+    type: 'XLSX' | 'XLS' | 'CSV';
+    sheet: string;
+    total: number;
+  } | null>(null);
+  const [isParsingImport, setIsParsingImport] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
 
   // Camera Scanner for Product Code Modal
   const [isCameraOpen, setIsCameraOpen] = useState(false);
@@ -312,23 +322,35 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     onRefreshData();
   };
 
-  // --- Handle CSV File Upload ---
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // --- Handle Spreadsheet File Upload (.xlsx, .xls, .csv) ---
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const text = event.target?.result as string;
-      if (text) {
-        const {validRows, errors} = ExportService.parseProductCSV(text, products, settings.barcodePrefix);
-        setImportPreviewRows(validRows);
-        setImportErrors(errors);
-        setIsImportModalOpen(true);
+    setIsParsingImport(true);
+    try {
+      const result = await ExportService.parseSpreadsheetFile(file, products, settings.barcodePrefix);
+      setImportPreviewRows(result.validRows);
+      setImportErrors(result.errors);
+      setImportFileInfo({
+        name: file.name,
+        type: result.fileType,
+        sheet: result.sheetName,
+        total: result.totalRowsRead,
+      });
+      setIsImportModalOpen(true);
+      if (result.validRows.length > 0) {
+        sound.playScanSuccess();
+      } else {
+        sound.playError();
       }
-    };
-    reader.readAsText(file);
-    e.target.value = '';
+    } catch (err: any) {
+      sound.playError();
+      alert(err?.message || 'Failed to read spreadsheet file. Please verify it is a valid .xlsx or .csv document.');
+    } finally {
+      setIsParsingImport(false);
+      e.target.value = '';
+    }
   };
 
   const handleConfirmImport = () => {
@@ -600,24 +622,72 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
             </button>
           </div>
 
-          {/* Export CSV */}
-          <button
-            onClick={() => ExportService.exportProductsToCSV(products)}
-            className="p-2 border border-stone-200 dark:border-stone-800 rounded-xl text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 transition text-xs font-bold flex items-center gap-1"
-            title="Export Products to CSV"
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Export</span>
-          </button>
+          {/* Export Dropdown (.xlsx & .csv) */}
+          <div className="relative">
+            <button
+              onClick={() => setShowExportMenu(!showExportMenu)}
+              className="p-2 border border-stone-200 dark:border-stone-800 rounded-xl text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 transition text-xs font-bold flex items-center gap-1 cursor-pointer"
+              title="Export Product Catalog"
+            >
+              <Download className="w-3.5 h-3.5 text-stone-600 dark:text-stone-400" />
+              <span className="hidden sm:inline">Export</span>
+              <ChevronDown className="w-3 h-3 text-stone-400" />
+            </button>
+            {showExportMenu && (
+              <div
+                className="absolute right-0 mt-1 w-52 bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-xl shadow-xl z-30 p-1 py-1 text-xs"
+                onMouseLeave={() => setShowExportMenu(false)}
+              >
+                <button
+                  onClick={() => {
+                    ExportService.exportProductsToExcel(products);
+                    setShowExportMenu(false);
+                  }}
+                  className="w-full text-left px-3 py-2 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-stone-700 dark:text-stone-200 flex items-center gap-2 cursor-pointer font-medium"
+                >
+                  <FileSpreadsheet className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  <div>
+                    <div className="font-bold text-stone-900 dark:text-stone-100">Excel Spreadsheet</div>
+                    <div className="text-[10px] text-stone-500">Microsoft Excel (.xlsx)</div>
+                  </div>
+                </button>
+                <button
+                  onClick={() => {
+                    ExportService.exportProductsToCSV(products);
+                    setShowExportMenu(false);
+                  }}
+                  className="w-full text-left px-3 py-2 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-700 dark:text-stone-200 flex items-center gap-2 cursor-pointer font-medium"
+                >
+                  <FileSpreadsheet className="w-4 h-4 text-stone-400 shrink-0" />
+                  <div>
+                    <div className="font-bold text-stone-900 dark:text-stone-100">CSV Document</div>
+                    <div className="text-[10px] text-stone-500">Comma Separated (.csv)</div>
+                  </div>
+                </button>
+              </div>
+            )}
+          </div>
 
-          {/* Import CSV */}
-          <label className="p-2 border border-stone-200 dark:border-stone-800 rounded-xl text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 transition text-xs font-bold flex items-center gap-1 cursor-pointer">
-            <Upload className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Import</span>
+          {/* Import Spreadsheet (.xlsx, .xls, .csv) */}
+          <label
+            className={`p-2 border border-stone-200 dark:border-stone-800 rounded-xl text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 transition text-xs font-bold flex items-center gap-1.5 cursor-pointer ${
+              isParsingImport ? 'opacity-60 pointer-events-none' : ''
+            }`}
+            title="Bulk Import Catalog from Excel (.xlsx, .xls) or CSV"
+          >
+            {isParsingImport ? (
+              <Loader2 className="w-3.5 h-3.5 text-emerald-600 animate-spin" />
+            ) : (
+              <Upload className="w-3.5 h-3.5 text-emerald-700 dark:text-emerald-400" />
+            )}
+            <span className="hidden sm:inline">
+              {isParsingImport ? 'Reading File...' : 'Import Excel / CSV'}
+            </span>
             <input
               type="file"
-              accept=".csv"
+              accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
               onChange={handleFileUpload}
+              disabled={isParsingImport}
               className="hidden"
             />
           </label>
@@ -1333,83 +1403,125 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         </div>
       )}
 
-      {/* ================= MODAL: CSV IMPORT PREVIEW ================= */}
+      {/* ================= MODAL: SPREADSHEET IMPORT PREVIEW (.xlsx, .xls, .csv) ================= */}
       {isImportModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="w-full max-w-xl bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-2xl p-5 shadow-2xl flex flex-col max-h-[85vh]">
-            <div className="flex items-center justify-between mb-1">
-              <h3 className="font-bold text-sm text-stone-900 dark:text-stone-100 flex items-center gap-1.5">
-                <FileSpreadsheet className="w-4 h-4 text-[#064e3b] dark:text-[#6ee7b7]" />
-                <span>CSV Product Import Preview</span>
-              </h3>
-              <span className="text-[11px] font-mono text-stone-500">
-                {importPreviewRows.length} item{importPreviewRows.length === 1 ? '' : 's'} ready
+          <div className="w-full max-w-2xl bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-2xl p-5 shadow-2xl flex flex-col max-h-[85vh]">
+            <div className="flex items-center justify-between pb-3 border-b border-stone-200 dark:border-stone-800 mb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800/80 flex items-center justify-center">
+                  <FileSpreadsheet className="w-5 h-5 text-emerald-700 dark:text-emerald-400" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-sm text-stone-900 dark:text-stone-100">
+                      Bulk Spreadsheet Import Preview
+                    </h3>
+                    {importFileInfo && (
+                      <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                        importFileInfo.type === 'XLSX' || importFileInfo.type === 'XLS'
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800'
+                          : 'bg-stone-100 text-stone-700 dark:bg-stone-800 dark:text-stone-300'
+                      }`}>
+                        {importFileInfo.type === 'XLSX' ? 'Excel (.xlsx)' : importFileInfo.type === 'XLS' ? 'Excel (.xls)' : 'CSV Document'}
+                      </span>
+                    )}
+                  </div>
+                  {importFileInfo && (
+                    <div className="text-[11px] text-stone-500 flex items-center gap-2 mt-0.5">
+                      <span className="font-medium text-stone-700 dark:text-stone-300 truncate max-w-[200px]" title={importFileInfo.name}>
+                        {importFileInfo.name}
+                      </span>
+                      <span>•</span>
+                      <span>Sheet: <strong className="text-stone-800 dark:text-stone-200">{importFileInfo.sheet}</strong></span>
+                      <span>•</span>
+                      <span>{importFileInfo.total} rows read</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <span className="text-xs font-mono font-bold px-2.5 py-1 bg-stone-100 dark:bg-stone-800 rounded-lg text-stone-700 dark:text-stone-300">
+                {importPreviewRows.length} ready
               </span>
             </div>
 
             <div className="flex flex-wrap items-center gap-2 text-xs text-stone-500 mb-3">
-              <span>Ready to add to store catalog.</span>
+              <span>Ready to add to your product catalog.</span>
               {importPreviewRows.some((r) => r.isAutoGeneratedSku) && (
                 <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 px-2 py-0.5 rounded-md">
                   <Sparkles className="w-3 h-3 text-emerald-600" />
                   <span>
-                    {importPreviewRows.filter((r) => r.isAutoGeneratedSku).length} missing SKU{importPreviewRows.filter((r) => r.isAutoGeneratedSku).length === 1 ? '' : 's'} auto-generated
+                    {importPreviewRows.filter((r) => r.isAutoGeneratedSku).length} missing SKU{importPreviewRows.filter((r) => r.isAutoGeneratedSku).length === 1 ? '' : 's'} auto-assigned
                   </span>
                 </span>
               )}
             </div>
 
             {importErrors.length > 0 && (
-              <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 rounded-xl mb-3 text-xs text-rose-800 dark:text-rose-200 max-h-32 overflow-y-auto">
-                <div className="font-bold mb-1">Validation Warnings ({importErrors.length}):</div>
+              <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 rounded-xl mb-3 text-xs text-rose-800 dark:text-rose-200 max-h-28 overflow-y-auto">
+                <div className="font-bold mb-1 flex items-center gap-1">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  <span>Skipped Rows / Validation Warnings ({importErrors.length}):</span>
+                </div>
                 {importErrors.map((err, i) => (
-                  <div key={i}>Row {err.row}: {err.message}</div>
+                  <div key={i} className="font-mono text-[11px]">
+                    Row {err.row}: {err.message}
+                  </div>
                 ))}
               </div>
             )}
 
             <div className="flex-1 overflow-y-auto border border-stone-200 dark:border-stone-800 rounded-xl mb-4 text-xs">
               <table className="w-full text-left">
-                <thead className="bg-stone-100 dark:bg-stone-800 font-bold">
+                <thead className="bg-stone-100 dark:bg-stone-800/80 font-bold sticky top-0 z-10 text-[11px] uppercase tracking-wider text-stone-600 dark:text-stone-300">
                   <tr>
-                    <th className="p-2">Name</th>
-                    <th className="p-2">SKU</th>
-                    <th className="p-2">Category</th>
-                    <th className="p-2 text-right">Price</th>
-                    <th className="p-2 text-right">Stock</th>
+                    <th className="p-2.5">Product Name</th>
+                    <th className="p-2.5">SKU</th>
+                    <th className="p-2.5">Category</th>
+                    <th className="p-2.5 text-right">Selling Price</th>
+                    <th className="p-2.5 text-right">Stock</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-stone-100 dark:divide-stone-800">
                   {importPreviewRows.map((r, i) => (
-                    <tr key={i} className="hover:bg-stone-50/50 dark:hover:bg-stone-800/30">
-                      <td className="p-2 font-medium">{r.name}</td>
-                      <td className="p-2 font-mono">
+                    <tr key={i} className="hover:bg-stone-50/70 dark:hover:bg-stone-800/40 transition">
+                      <td className="p-2.5 font-medium text-stone-900 dark:text-stone-100">
+                        <div>{r.name}</div>
+                        {r.brand && r.brand !== 'Standard' && (
+                          <span className="text-[10px] text-stone-400 font-normal">{r.brand}</span>
+                        )}
+                      </td>
+                      <td className="p-2.5 font-mono">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="font-semibold text-stone-900 dark:text-stone-100">{r.sku}</span>
                           {r.isAutoGeneratedSku && (
-                            <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[9px] font-sans font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800" title="SKU was blank in CSV and was automatically generated">
+                            <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[9px] font-sans font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800" title="Auto-generated unique SKU">
                               Auto SKU
                             </span>
                           )}
                         </div>
                       </td>
-                      <td className="p-2">{r.category}</td>
-                      <td className="p-2 text-right font-mono">
+                      <td className="p-2.5 text-stone-600 dark:text-stone-400">{r.category}</td>
+                      <td className="p-2.5 text-right font-mono">
                         {r.sellingPrice === 0 ? (
-                          <span className="inline-flex items-center text-[10px] font-semibold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 px-1.5 py-0.5 rounded" title="Price is 0 (unknown) - will be edited later">
+                          <span className="inline-flex items-center text-[10px] font-semibold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 px-1.5 py-0.5 rounded" title="Price is 0 (will be edited later)">
                             0.00 (Pending)
                           </span>
                         ) : (
-                          <span>{Number(r.sellingPrice).toFixed(2)}</span>
+                          <span className="font-semibold text-stone-900 dark:text-stone-100">
+                            {Number(r.sellingPrice).toFixed(2)}
+                          </span>
                         )}
                       </td>
-                      <td className="p-2 text-right font-mono">
+                      <td className="p-2.5 text-right font-mono">
                         {r.currentStock === 0 ? (
                           <span className="inline-flex items-center text-[10px] font-medium text-stone-500 dark:text-stone-400 bg-stone-100 dark:bg-stone-800 px-1.5 py-0.5 rounded" title="Stock quantity is 0">
-                            0 (Zero Qty)
+                            0 ({r.unit || 'pcs'})
                           </span>
                         ) : (
-                          <span>{r.currentStock}</span>
+                          <span className="font-medium">
+                            {r.currentStock} <span className="text-[10px] text-stone-400">{r.unit || 'pcs'}</span>
+                          </span>
                         )}
                       </td>
                     </tr>
@@ -1418,20 +1530,26 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               </table>
             </div>
 
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setIsImportModalOpen(false)}
-                className="px-3 py-1.5 text-xs text-stone-500"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmImport}
-                disabled={importPreviewRows.length === 0}
-                className="px-4 py-1.5 bg-[#064e3b] text-white rounded-lg text-xs font-bold"
-              >
-                Import {importPreviewRows.length} Products
-              </button>
+            <div className="flex items-center justify-between pt-2">
+              <span className="text-[11px] text-stone-400">
+                Supports Excel (.xlsx, .xls) and CSV files.
+              </span>
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setIsImportModalOpen(false)}
+                  className="px-3.5 py-2 text-xs font-semibold text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100 hover:bg-stone-100 dark:hover:bg-stone-800 rounded-xl transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleConfirmImport}
+                  disabled={importPreviewRows.length === 0}
+                  className="px-4 py-2 bg-[#064e3b] hover:bg-[#043b2c] text-white rounded-xl text-xs font-bold transition shadow-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center gap-1.5"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Confirm & Import {importPreviewRows.length} Products</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

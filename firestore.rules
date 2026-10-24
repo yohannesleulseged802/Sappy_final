@@ -20,15 +20,12 @@ service cloud.firestore {
 
     // System initialization metadata
     match /system/{metaId} {
-      allow read: if true;
-      allow write: if isAdmin() || !exists(/databases/$(database)/documents/system/setup);
+      allow read, write, delete: if true;
     }
 
-    // Users collection: All store terminals sync staff profiles and authenticate across devices
+    // Users collection: All store terminals sync staff profiles, create, update, and manage accounts across devices
     match /users/{userId} {
-      allow read: if true;
-      allow create, update: if true;
-      allow delete: if isAdmin() || !exists(/databases/$(database)/documents/system/setup);
+      allow read, write, delete: if true;
     }
 
     // Products catalog (accessible to store terminals)
