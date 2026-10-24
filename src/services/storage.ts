@@ -13,6 +13,17 @@ import {
   StockMovement,
   CreditTransaction,
 } from '../types';
+import { db, auth } from './firebaseAuth';
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  deleteDoc,
+  onSnapshot,
+} from 'firebase/firestore';
+import { signInWithEmailAndPassword } from 'firebase/auth';
 
 const STORAGE_KEYS = {
   PRODUCTS: 'sappy_pos_products_v1',
@@ -202,6 +213,188 @@ class StorageService {
     localStorage.setItem(STORAGE_KEYS.STAFF, JSON.stringify(staff));
   }
 
+  // --- Firebase Cloud Database Cross-Device Synchronization ---
+  mapFirestoreDocToStaff(docId: string, d: any): Staff {
+    return {
+      id: docId || d.uid || d.id || `staff-${Date.now()}`,
+      employeeId: d.employeeId || `SAP-EMP-${Date.now().toString().slice(-4)}`,
+      name: d.name || d.fullName || `${d.firstName || ''} ${d.lastName || ''}`.trim() || 'Staff Member',
+      firstName: d.firstName || '',
+      lastName: d.lastName || '',
+      username: d.username ? d.username.toLowerCase() : '',
+      displayName: d.displayName || d.fullName || d.name,
+      email: d.email ? d.email.toLowerCase() : '',
+      phone: d.phone || '',
+      address: d.address || '',
+      city: d.city || '',
+      addressDetails: d.addressDetails,
+      jobTitle: d.jobTitle || 'POS Cashier',
+      department: d.department || 'Retail & Print Operations',
+      role: (d.role as any) || 'cashier',
+      pin: d.pin ? String(d.pin).replace(/\D/g, '').slice(0, 4) : '1234',
+      password: d.password || '',
+      active: d.active !== false,
+      approvalStatus: d.accountStatus || d.approvalStatus || 'approved',
+      avatar: d.profilePictureUrl || d.avatar || '',
+      profilePictureUrl: d.profilePictureUrl || d.avatar || '',
+      createdAt: d.createdAt || new Date().toISOString(),
+      updatedAt: d.updatedAt || new Date().toISOString(),
+      approvedAt: d.approvedAt,
+      approvedBy: d.approvedBy,
+      lastLogin: d.lastLogin,
+    };
+  }
+
+  async pushStaffToFirestore(staff: Staff): Promise<void> {
+    try {
+      const userRef = doc(db, 'users', staff.id);
+      await setDoc(
+        userRef,
+        {
+          uid: staff.id,
+          id: staff.id,
+          employeeId: staff.employeeId,
+          name: staff.name,
+          firstName: staff.firstName || '',
+          lastName: staff.lastName || '',
+          fullName: staff.name,
+          username: staff.username ? staff.username.toLowerCase() : '',
+          displayName: staff.displayName || staff.name,
+          email: staff.email ? staff.email.toLowerCase() : '',
+          phone: staff.phone || '',
+          address: staff.address || '',
+          city: staff.city || '',
+          profilePictureUrl: staff.profilePictureUrl || staff.avatar || '',
+          avatar: staff.avatar || staff.profilePictureUrl || '',
+          jobTitle: staff.jobTitle || 'POS Cashier',
+          department: staff.department || 'Retail & Print Operations',
+          role: staff.role,
+          pin: staff.pin || '1234',
+          password: staff.password || '',
+          accountStatus: staff.approvalStatus || 'approved',
+          approvalStatus: staff.approvalStatus || 'approved',
+          active: staff.active ?? true,
+          createdAt: staff.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          approvedAt: staff.approvedAt || null,
+          approvedBy: staff.approvedBy || null,
+          lastLogin: staff.lastLogin || null,
+        },
+        { merge: true }
+      );
+    } catch (err) {
+      console.warn('Firestore pushStaff notice (offline/retry):', err);
+    }
+  }
+
+  async deleteStaffFromFirestore(staffId: string): Promise<void> {
+    try {
+      await deleteDoc(doc(db, 'users', staffId));
+    } catch (err) {
+      console.warn('Firestore deleteStaff notice:', err);
+    }
+  }
+
+  mergeRemoteStaff(remoteStaff: Staff[], onUpdate?: (staffList: Staff[]) => void): Staff[] {
+    const localList = this.getStaffList();
+    const mergedMap = new Map<string, Staff>();
+
+    // Put local first
+    localList.forEach((s) => {
+      mergedMap.set(s.id, s);
+      if (s.email) mergedMap.set(`email:${s.email.toLowerCase()}`, s);
+      if (s.username) mergedMap.set(`user:${s.username.toLowerCase()}`, s);
+    });
+
+    // Merge remote
+    remoteStaff.forEach((r) => {
+      const existing =
+        mergedMap.get(r.id) ||
+        (r.email ? mergedMap.get(`email:${r.email.toLowerCase()}`) : null) ||
+        (r.username ? mergedMap.get(`user:${r.username.toLowerCase()}`) : null);
+
+      if (existing) {
+        // Retain existing password if remote omitted it
+        const merged: Staff = {
+          ...existing,
+          ...r,
+          password: r.password || existing.password || '',
+        };
+        mergedMap.set(r.id, merged);
+      } else {
+        mergedMap.set(r.id, r);
+      }
+    });
+
+    // Extract unique by ID
+    const uniqueStaff: Staff[] = [];
+    const seenIds = new Set<string>();
+    mergedMap.forEach((s) => {
+      if (!seenIds.has(s.id)) {
+        seenIds.add(s.id);
+        uniqueStaff.push(s);
+      }
+    });
+
+    this.saveStaffList(uniqueStaff);
+
+    if (this.isBrowser() && uniqueStaff.length > 0) {
+      localStorage.setItem(STORAGE_KEYS.STORE_INITIALIZED, 'true');
+      localStorage.setItem('sappy_initial_signup_completed', 'true');
+    }
+
+    if (onUpdate) {
+      onUpdate(uniqueStaff);
+    }
+
+    return uniqueStaff;
+  }
+
+  syncStaffWithFirestore(onUpdate?: (staffList: Staff[]) => void): () => void {
+    if (!this.isBrowser()) return () => {};
+
+    // 1. Immediate fetch on mount
+    getDocs(collection(db, 'users'))
+      .then((snap) => {
+        const remoteStaff: Staff[] = [];
+        snap.forEach((docSnap) => {
+          remoteStaff.push(this.mapFirestoreDocToStaff(docSnap.id, docSnap.data()));
+        });
+
+        if (remoteStaff.length > 0) {
+          this.mergeRemoteStaff(remoteStaff, onUpdate);
+        } else {
+          // If Firestore is empty but we have local staff on this device, push local staff to Firestore
+          const local = this.getStaffList();
+          if (local.length > 0) {
+            local.forEach((s) => this.pushStaffToFirestore(s));
+          }
+        }
+      })
+      .catch((err) => {
+        console.warn('Initial Firestore staff sync notice:', err);
+      });
+
+    // 2. Real-time live listener for cross-device updates
+    const unsubscribe = onSnapshot(
+      collection(db, 'users'),
+      (snap) => {
+        const remoteStaff: Staff[] = [];
+        snap.forEach((docSnap) => {
+          remoteStaff.push(this.mapFirestoreDocToStaff(docSnap.id, docSnap.data()));
+        });
+        if (remoteStaff.length > 0) {
+          this.mergeRemoteStaff(remoteStaff, onUpdate);
+        }
+      },
+      (err) => {
+        console.warn('Firestore real-time staff sync notice:', err);
+      }
+    );
+
+    return unsubscribe;
+  }
+
   private pushStaffToServer(staffList: Staff[]) {
     if (!this.isBrowser()) return;
     try {
@@ -239,6 +432,7 @@ class StorageService {
       }
     }
     this.pushStaffToServer(list);
+    this.pushStaffToFirestore(newStaff);
   }
 
   updateStaffAccount(updatedStaff: Staff) {
@@ -266,6 +460,7 @@ class StorageService {
       }
     }
     this.pushStaffToServer(list);
+    this.pushStaffToFirestore(updatedStaff);
   }
 
   approveStaff(staffId: string, approverName: string = 'Administrator') {
@@ -292,6 +487,7 @@ class StorageService {
         }).catch(() => {});
       } catch {}
       this.pushStaffToServer(list);
+      this.pushStaffToFirestore(target);
     }
   }
 
@@ -316,6 +512,7 @@ class StorageService {
         }).catch(() => {});
       } catch {}
       this.pushStaffToServer(list);
+      this.pushStaffToFirestore(target);
     }
   }
 
@@ -336,6 +533,7 @@ class StorageService {
         }),
       }).catch(() => {});
     } catch {}
+    this.deleteStaffFromFirestore(staffId);
     return true;
   }
 
@@ -534,13 +732,101 @@ class StorageService {
     passwordAttempt: string,
     _rememberSession?: boolean
   ): Promise<{ success: boolean; staff?: Staff; error?: string }> {
+    const cleanIdent = usernameOrEmail.trim().toLowerCase();
+
     // 1. Try local authentication first
     const localResult = this.authenticateWithPassword(usernameOrEmail, passwordAttempt);
     if (localResult.success && localResult.staff) {
       return localResult;
     }
 
-    // 2. Try server-side authentication (/api/auth/login) and sync back to local
+    // 2. Query Cloud Firestore directly across all devices (Firebase Database Sync)
+    try {
+      const usersCol = collection(db, 'users');
+      const qSnapshot = await getDocs(usersCol);
+
+      let matchedStaff: Staff | null = null;
+      qSnapshot.forEach((docSnap) => {
+        const d = docSnap.data();
+        const docEmail = d.email ? String(d.email).trim().toLowerCase() : '';
+        const docUser = d.username ? String(d.username).trim().toLowerCase() : '';
+
+        if (docEmail === cleanIdent || docUser === cleanIdent) {
+          matchedStaff = this.mapFirestoreDocToStaff(docSnap.id, d);
+        }
+      });
+
+      if (matchedStaff) {
+        const staff = matchedStaff as Staff;
+        // Verify password stored in Firestore or Firebase Auth
+        let isPassValid = false;
+        const storedPass = staff.password || '';
+        if (
+          storedPass.length > 0 &&
+          (passwordAttempt === storedPass ||
+            passwordAttempt.trim() === storedPass.trim())
+        ) {
+          isPassValid = true;
+        }
+
+        // Also test Firebase Auth sign-in if email is registered
+        if (!isPassValid && staff.email) {
+          try {
+            await signInWithEmailAndPassword(auth, staff.email, passwordAttempt);
+            isPassValid = true;
+          } catch {}
+        }
+
+        if (isPassValid) {
+          if (!staff.active || staff.approvalStatus === 'disabled') {
+            return {
+              success: false,
+              error: 'This staff account has been disabled. Please contact an administrator.',
+            };
+          }
+          if (staff.approvalStatus === 'pending') {
+            return {
+              success: false,
+              error: 'Account pending Administrator authorization.',
+            };
+          }
+
+          staff.password = passwordAttempt;
+          staff.lastLogin = new Date().toISOString();
+          this.addStaffAccount(staff);
+          this.clearAuthFailures();
+          this.setCurrentStaff(staff.id);
+          this.setAuthenticated(true);
+          this.setRegisterLocked(false);
+          this.addAuditLog('AUTH_SUCCESS', 'AUTH', `${staff.name} (${staff.role.toUpperCase()}) authenticated across devices via Firebase Database.`);
+          return { success: true, staff };
+        }
+      } else if (cleanIdent.includes('@')) {
+        // Direct Firebase Auth login fallback if user exists in Firebase Auth
+        try {
+          const userCred = await signInWithEmailAndPassword(auth, cleanIdent, passwordAttempt);
+          if (userCred.user) {
+            const userDocSnap = await getDoc(doc(db, 'users', userCred.user.uid));
+            const d = userDocSnap.exists() ? userDocSnap.data() : {};
+            const staff = this.mapFirestoreDocToStaff(userCred.user.uid, {
+              ...d,
+              email: userCred.user.email || cleanIdent,
+              password: passwordAttempt,
+            });
+            this.addStaffAccount(staff);
+            this.clearAuthFailures();
+            this.setCurrentStaff(staff.id);
+            this.setAuthenticated(true);
+            this.setRegisterLocked(false);
+            return { success: true, staff };
+          }
+        } catch {}
+      }
+    } catch (fbErr) {
+      console.warn('Firebase user sync on auth notice:', fbErr);
+    }
+
+    // 3. Try server-side authentication (/api/auth/login) for Node server environments
     try {
       const resp = await fetch('/api/auth/login', {
         method: 'POST',
@@ -553,29 +839,10 @@ class StorageService {
       const data = await resp.json().catch(() => ({}));
       if (resp.ok && data.success && data.user) {
         const u = data.user;
-        const syncedStaff: Staff = {
-          id: u.uid || u.id || `staff-${Date.now()}`,
-          employeeId: u.employeeId,
-          name: u.fullName || u.name || `${u.firstName || ''} ${u.lastName || ''}`.trim() || 'Staff Member',
-          firstName: u.firstName,
-          lastName: u.lastName,
-          username: u.username,
-          displayName: u.displayName,
-          email: u.email,
-          phone: u.phone,
-          address: u.address,
-          city: u.city,
-          jobTitle: u.jobTitle,
-          department: u.department,
-          role: u.role || 'cashier',
-          pin: u.pin || '1234',
+        const syncedStaff = this.mapFirestoreDocToStaff(u.uid || u.id, {
+          ...u,
           password: passwordAttempt,
-          active: u.active ?? true,
-          approvalStatus: u.accountStatus || u.approvalStatus || 'approved',
-          avatar: u.profilePictureUrl || u.avatar,
-          profilePictureUrl: u.profilePictureUrl || u.avatar,
-          lastLogin: new Date().toISOString(),
-        };
+        });
         this.addStaffAccount(syncedStaff);
         this.clearAuthFailures();
         this.setCurrentStaff(syncedStaff.id);

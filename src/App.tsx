@@ -194,6 +194,13 @@ export default function App() {
   // Cross-device continuous uniformity synchronization (Requirement: Uniform Across Devices)
   useEffect(() => {
     let isMounted = true;
+
+    // Real-time Firebase Database Staff Synchronization
+    const unsubscribeStaff = storage.syncStaffWithFirestore(() => {
+      if (!isMounted) return;
+      refreshAllData();
+    });
+
     const syncInterval = setInterval(async () => {
       if (!isMounted || !isOnline) return;
       const res = await storage.syncAllDataWithBackend();
@@ -220,6 +227,7 @@ export default function App() {
 
     return () => {
       isMounted = false;
+      unsubscribeStaff();
       clearInterval(syncInterval);
       window.removeEventListener('focus', handleFocus);
     };

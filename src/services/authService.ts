@@ -411,24 +411,33 @@ class AuthService {
     try {
       await setDoc(doc(db, 'users', finalUid), {
         uid: finalUid,
+        id: finalUid,
         employeeId: newStaff.employeeId,
         firstName: newStaff.firstName,
         lastName: newStaff.lastName,
         fullName: newStaff.name,
+        name: newStaff.name,
         username: newStaff.username,
+        displayName: newStaff.displayName || newStaff.name,
         email: newStaff.email,
         phone: newStaff.phone,
         address: newStaff.address,
         city: newStaff.city,
         profilePictureUrl: newStaff.profilePictureUrl,
+        avatar: newStaff.profilePictureUrl,
         jobTitle: newStaff.jobTitle,
         department: newStaff.department,
         role: newStaff.role,
+        pin: newStaff.pin,
+        password: newStaff.password,
         accountStatus: newStaff.approvalStatus,
+        approvalStatus: newStaff.approvalStatus,
         active: newStaff.active,
         createdAt: newStaff.createdAt,
         updatedAt: newStaff.updatedAt,
-      });
+        approvedAt: newStaff.approvedAt,
+        approvedBy: newStaff.approvedBy,
+      }, { merge: true });
 
       if (isApprovedByPasscode) {
         await setDoc(doc(db, 'system', 'setup'), {

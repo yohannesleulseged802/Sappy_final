@@ -138,9 +138,24 @@ export const LoginView: React.FC<LoginViewProps> = ({onLoginSuccess, isOnline}) 
   const [isSubmittingSignup, setIsSubmittingSignup] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Sync staff list from backend on load
+  // Sync staff list across all devices via Firebase Database
   useEffect(() => {
     let isMounted = true;
+
+    // 1. Live synchronization with Cloud Firestore users collection
+    const unsubscribeFirestore = storage.syncStaffWithFirestore((syncedList) => {
+      if (!isMounted) return;
+      if (syncedList.length > 0) {
+        setStaffVersion((v) => v + 1);
+        const activeOne = syncedList.find((s) => s.active && s.approvalStatus !== 'pending');
+        if (activeOne) {
+          setUsername((prev) => prev || activeOne.email || activeOne.username || '');
+          setSelectedStaffId((prev) => prev || activeOne.id);
+        }
+      }
+    });
+
+    // 2. Backend sync fallback
     storage.syncStaffFromBackend().then((res) => {
       if (!isMounted) return;
       if (res.staffList.length > 0) {
@@ -152,8 +167,10 @@ export const LoginView: React.FC<LoginViewProps> = ({onLoginSuccess, isOnline}) 
         }
       }
     });
+
     return () => {
       isMounted = false;
+      unsubscribeFirestore();
     };
   }, []);
 
