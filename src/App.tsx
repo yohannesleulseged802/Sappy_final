@@ -201,6 +201,12 @@ export default function App() {
       refreshAllData();
     });
 
+    // Real-time Firebase Database Product Catalog Synchronization across all devices
+    const unsubscribeProducts = storage.syncProductsWithFirestore((updatedProducts) => {
+      if (!isMounted) return;
+      setProducts(updatedProducts);
+    });
+
     const syncInterval = setInterval(async () => {
       if (!isMounted || !isOnline) return;
       const res = await storage.syncAllDataWithBackend();
@@ -228,6 +234,7 @@ export default function App() {
     return () => {
       isMounted = false;
       unsubscribeStaff();
+      unsubscribeProducts();
       clearInterval(syncInterval);
       window.removeEventListener('focus', handleFocus);
     };

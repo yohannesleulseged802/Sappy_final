@@ -353,9 +353,10 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     }
   };
 
-  const handleConfirmImport = () => {
+  const handleConfirmImport = async () => {
     let importedCount = 0;
     const existingSkus = new Set(products.map((p) => (p.sku || '').toLowerCase()));
+    const newProducts: Product[] = [];
 
     for (let i = 0; i < importPreviewRows.length; i++) {
       const row = importPreviewRows[i];
@@ -392,11 +393,18 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         updatedDate: new Date().toISOString(),
       };
       const res = storage.saveProduct(prod, true);
-      if (res.success) importedCount++;
+      if (res.success) {
+        importedCount++;
+        newProducts.push(prod);
+      }
+    }
+
+    if (newProducts.length > 0) {
+      await storage.pushProductsBatchToFirestore(newProducts);
     }
 
     sound.playCheckoutSuccess();
-    alert(`Successfully imported ${importedCount} products into catalog!`);
+    alert(`Successfully imported ${importedCount} products into catalog! Synced across all devices.`);
     setIsImportModalOpen(false);
     setImportPreviewRows([]);
     setImportErrors([]);
@@ -700,6 +708,23 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
           >
             <Barcode className="w-3.5 h-3.5" />
             <span className="hidden md:inline">Generate Codes</span>
+          </button>
+
+          {/* Cloud Sync Button */}
+          <button
+            onClick={async () => {
+              const local = storage.getProducts();
+              if (local.length > 0) {
+                await storage.pushProductsBatchToFirestore(local);
+              }
+              onRefreshData();
+              sound.playScanSuccess();
+            }}
+            className="p-2 border border-stone-200 dark:border-stone-800 rounded-xl text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 transition text-xs font-bold flex items-center gap-1 cursor-pointer"
+            title="Sync all products with Firebase Cloud Database across devices"
+          >
+            <RefreshCw className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+            <span className="hidden lg:inline">Cloud Sync</span>
           </button>
 
           {/* Add Product Button */}

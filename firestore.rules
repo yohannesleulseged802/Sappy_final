@@ -28,10 +28,9 @@ service cloud.firestore {
       allow read, write, delete: if true;
     }
 
-    // Products catalog (accessible to store terminals)
+    // Products catalog: All store terminals sync inventory items across devices in real-time
     match /products/{productId} {
-      allow read: if true;
-      allow write, delete: if isAuthenticated() || !exists(/databases/$(database)/documents/system/setup);
+      allow read, write, delete: if true;
     }
 
     // Sales ledger & receipts

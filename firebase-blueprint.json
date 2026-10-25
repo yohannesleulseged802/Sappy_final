@@ -39,6 +39,29 @@
         "initialAdminUid": { "type": "string" }
       },
       "required": ["isInitialized"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Product catalog item with SKU, codes, pricing, and stock",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique product ID" },
+        "name": { "type": "string", "description": "Product name" },
+        "description": { "type": "string", "description": "Product description" },
+        "category": { "type": "string", "description": "Product category" },
+        "brand": { "type": "string", "description": "Product brand" },
+        "sku": { "type": "string", "description": "Stock keeping unit" },
+        "costPrice": { "type": "number", "description": "Cost purchase price" },
+        "sellingPrice": { "type": "number", "description": "Retail selling price" },
+        "wholesalePrice": { "type": "number", "description": "Wholesale bulk price" },
+        "currentStock": { "type": "number", "description": "Available stock quantity" },
+        "minStockThreshold": { "type": "number", "description": "Low stock warning threshold" },
+        "unit": { "type": "string", "description": "Inventory unit" },
+        "supplier": { "type": "string", "description": "Product vendor or supplier" },
+        "createdDate": { "type": "string", "format": "date-time" },
+        "updatedDate": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "sku", "sellingPrice", "currentStock"]
     }
   },
   "firestore": {
@@ -49,6 +72,10 @@
     "/system/{metaId}": {
       "schema": "SystemMeta",
       "description": "Protected system initialization records"
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Product catalog inventory synced across all terminals and devices"
     }
   }
 }

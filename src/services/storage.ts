@@ -22,6 +22,7 @@ import {
   setDoc,
   deleteDoc,
   onSnapshot,
+  writeBatch,
 } from 'firebase/firestore';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 
@@ -1319,6 +1320,203 @@ class StorageService {
     } catch {}
   }
 
+  saveProductsLocally(products: Product[]) {
+    if (!this.isBrowser()) return;
+    localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
+  }
+
+  // --- Firebase Cloud Database Cross-Device Product Synchronization ---
+  mapFirestoreDocToProduct(docId: string, d: any): Product {
+    return {
+      id: docId || d.id || `prod-${Date.now()}`,
+      name: d.name || 'Unnamed Product',
+      description: d.description || '',
+      category: d.category || 'General Stationery',
+      brand: d.brand || 'Standard',
+      sku: d.sku || `SAP-${Date.now().toString().slice(-4)}`,
+      costPrice: typeof d.costPrice === 'number' ? d.costPrice : Number(d.costPrice) || 0,
+      sellingPrice: typeof d.sellingPrice === 'number' ? d.sellingPrice : Number(d.sellingPrice) || 0,
+      wholesalePrice: typeof d.wholesalePrice === 'number' ? d.wholesalePrice : Number(d.wholesalePrice) || 0,
+      currentStock: typeof d.currentStock === 'number' ? d.currentStock : Number(d.currentStock) || 0,
+      minStockThreshold: typeof d.minStockThreshold === 'number' ? d.minStockThreshold : Number(d.minStockThreshold) || 5,
+      unit: d.unit || 'pcs',
+      supplier: d.supplier || '',
+      imageUrl: d.imageUrl || '',
+      codes: Array.isArray(d.codes) ? d.codes : [],
+      createdDate: d.createdDate || new Date().toISOString(),
+      updatedDate: d.updatedDate || new Date().toISOString(),
+    };
+  }
+
+  async pushProductToFirestore(product: Product): Promise<void> {
+    try {
+      const prodRef = doc(db, 'products', product.id);
+      await setDoc(
+        prodRef,
+        {
+          id: product.id,
+          name: product.name,
+          description: product.description || '',
+          category: product.category || 'General Stationery',
+          brand: product.brand || 'Standard',
+          sku: product.sku,
+          costPrice: product.costPrice || 0,
+          sellingPrice: product.sellingPrice || 0,
+          wholesalePrice: product.wholesalePrice || 0,
+          currentStock: product.currentStock || 0,
+          minStockThreshold: product.minStockThreshold || 5,
+          unit: product.unit || 'pcs',
+          supplier: product.supplier || '',
+          imageUrl: product.imageUrl || '',
+          codes: product.codes || [],
+          createdDate: product.createdDate || new Date().toISOString(),
+          updatedDate: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+    } catch (err) {
+      console.warn('Firestore pushProduct notice:', err);
+    }
+  }
+
+  async pushProductsBatchToFirestore(products: Product[]): Promise<void> {
+    if (!products || products.length === 0) return;
+    try {
+      const CHUNK_SIZE = 400;
+      for (let i = 0; i < products.length; i += CHUNK_SIZE) {
+        const chunk = products.slice(i, i + CHUNK_SIZE);
+        const batch = writeBatch(db);
+        for (const p of chunk) {
+          const ref = doc(db, 'products', p.id);
+          batch.set(
+            ref,
+            {
+              id: p.id,
+              name: p.name,
+              description: p.description || '',
+              category: p.category || 'General Stationery',
+              brand: p.brand || 'Standard',
+              sku: p.sku,
+              costPrice: p.costPrice || 0,
+              sellingPrice: p.sellingPrice || 0,
+              wholesalePrice: p.wholesalePrice || 0,
+              currentStock: p.currentStock || 0,
+              minStockThreshold: p.minStockThreshold || 5,
+              unit: p.unit || 'pcs',
+              supplier: p.supplier || '',
+              imageUrl: p.imageUrl || '',
+              codes: p.codes || [],
+              createdDate: p.createdDate || new Date().toISOString(),
+              updatedDate: p.updatedDate || new Date().toISOString(),
+            },
+            { merge: true }
+          );
+        }
+        await batch.commit();
+      }
+    } catch (err) {
+      console.warn('Firestore pushProductsBatch notice:', err);
+    }
+  }
+
+  async deleteProductFromFirestore(productId: string): Promise<void> {
+    try {
+      await deleteDoc(doc(db, 'products', productId));
+    } catch (err) {
+      console.warn('Firestore deleteProduct notice:', err);
+    }
+  }
+
+  mergeRemoteProducts(remoteProducts: Product[], onUpdate?: (products: Product[]) => void): Product[] {
+    const localProducts = this.getProducts();
+
+    // Map remote products by id
+    const remoteMap = new Map<string, Product>();
+    remoteProducts.forEach((p) => remoteMap.set(p.id, p));
+
+    // Check if there are local products that don't exist in remote Firestore yet
+    const missingInRemote: Product[] = [];
+    localProducts.forEach((local) => {
+      if (!remoteMap.has(local.id)) {
+        // Also check if SKU matches an existing remote item
+        const skuMatch = remoteProducts.find(
+          (r) => r.sku && local.sku && r.sku.toLowerCase() === local.sku.toLowerCase()
+        );
+        if (!skuMatch) {
+          missingInRemote.push(local);
+        }
+      }
+    });
+
+    // If local has items not in remote, push them to Firestore so other devices see them!
+    if (missingInRemote.length > 0) {
+      this.pushProductsBatchToFirestore(missingInRemote).catch(() => {});
+    }
+
+    // Merged list: remote products plus any local items pending upload
+    const merged: Product[] = [...remoteProducts];
+    missingInRemote.forEach((missing) => merged.push(missing));
+
+    this.saveProductsLocally(merged);
+
+    if (onUpdate) {
+      onUpdate(merged);
+    }
+
+    return merged;
+  }
+
+  syncProductsWithFirestore(onUpdate?: (products: Product[]) => void): () => void {
+    if (!this.isBrowser()) return () => {};
+
+    // 1. Immediate fetch on mount
+    getDocs(collection(db, 'products'))
+      .then((snap) => {
+        const remoteProds: Product[] = [];
+        snap.forEach((docSnap) => {
+          remoteProds.push(this.mapFirestoreDocToProduct(docSnap.id, docSnap.data()));
+        });
+
+        if (remoteProds.length > 0) {
+          this.mergeRemoteProducts(remoteProds, onUpdate);
+        } else {
+          // If Firestore is empty but this device has local products, push all local products to Firestore!
+          const local = this.getProducts();
+          if (local.length > 0) {
+            this.pushProductsBatchToFirestore(local);
+          }
+        }
+      })
+      .catch((err) => {
+        console.warn('Initial Firestore products sync notice:', err);
+      });
+
+    // 2. Real-time live listener for cross-device updates
+    const unsubscribe = onSnapshot(
+      collection(db, 'products'),
+      (snap) => {
+        const remoteProds: Product[] = [];
+        snap.forEach((docSnap) => {
+          remoteProds.push(this.mapFirestoreDocToProduct(docSnap.id, docSnap.data()));
+        });
+
+        if (remoteProds.length > 0) {
+          this.mergeRemoteProducts(remoteProds, onUpdate);
+        } else {
+          const local = this.getProducts();
+          if (local.length > 0 && snap.metadata.hasPendingWrites === false) {
+            this.pushProductsBatchToFirestore(local);
+          }
+        }
+      },
+      (err) => {
+        console.warn('Firestore real-time products sync notice:', err);
+      }
+    );
+
+    return unsubscribe;
+  }
+
   /**
    * Code Uniqueness & Validation Check (Requirement #8)
    * Detects duplicate codes across all products.
@@ -1392,6 +1590,7 @@ class StorageService {
     }
 
     this.saveProducts(updated);
+    this.pushProductToFirestore(product).catch(() => {});
     this.enqueueSync('product', isNew ? 'create' : 'update', product);
     return { success: true };
   }
@@ -1403,6 +1602,7 @@ class StorageService {
 
     const filtered = products.filter((p) => p.id !== productId);
     this.saveProducts(filtered);
+    this.deleteProductFromFirestore(productId).catch(() => {});
     this.addAuditLog('PRODUCT_DELETED', 'INVENTORY', `Product "${target.name}" (${target.sku}) deleted.`, target.id);
     this.enqueueSync('product', 'delete', { id: productId });
     return true;
@@ -1425,6 +1625,7 @@ class StorageService {
     product.updatedDate = new Date().toISOString();
 
     this.saveProducts(products);
+    this.pushProductToFirestore(product).catch(() => {});
 
     const movement: StockMovement = {
       id: `mov-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
