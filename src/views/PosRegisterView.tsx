@@ -108,6 +108,9 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
   const [holdLabel, setHoldLabel] = useState('');
   const [isHoldInputOpen, setIsHoldInputOpen] = useState(false);
 
+  // --- Viewport Responsiveness Tab for mobile/tablet (< lg) ---
+  const [mobileTab, setMobileTab] = useState<'catalog' | 'cart'>('catalog');
+
   // Categories list
   const categories = useMemo(() => {
     const set = new Set<string>();
@@ -504,9 +507,35 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
 
   return (
     <div className="flex-1 flex flex-col lg:flex-row h-[calc(100vh-3.5rem)] overflow-hidden bg-[#fdfbf7] dark:bg-[#12100e] relative">
+      {/* Mobile / Small Screen View Switcher (< lg) */}
+      <div className="lg:hidden flex items-center justify-between border-b border-[#e6dfd5] dark:border-[#362e26] bg-[#f5f1e8] dark:bg-[#1a1613] p-1.5 shrink-0 z-20">
+        <button
+          onClick={() => setMobileTab('catalog')}
+          className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+            mobileTab === 'catalog'
+              ? 'bg-[#064e3b] text-white shadow-xs'
+              : 'text-stone-600 dark:text-stone-300 hover:bg-stone-200/60 dark:hover:bg-stone-800'
+          }`}
+        >
+          <Layers className="w-3.5 h-3.5" />
+          <span>Catalog Items ({products.length})</span>
+        </button>
+        <button
+          onClick={() => setMobileTab('cart')}
+          className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+            mobileTab === 'cart'
+              ? 'bg-[#064e3b] text-white shadow-xs'
+              : 'text-stone-600 dark:text-stone-300 hover:bg-stone-200/60 dark:hover:bg-stone-800'
+          }`}
+        >
+          <CreditCard className="w-3.5 h-3.5" />
+          <span>Cart ({cart.reduce((s, i) => s + i.quantity, 0)}) • {grandTotal.toFixed(0)} {settings.currency}</span>
+        </button>
+      </div>
+
       {/* ================= SALE RECORDED BANNER (INTERNAL LEDGER ONLY) ================= */}
       {justRecordedNotice && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 bg-emerald-900 text-white px-4 py-2.5 rounded-2xl shadow-2xl border border-emerald-600/50 flex items-center gap-3 animate-in fade-in slide-in-from-top-3 duration-200">
+        <div className="absolute top-12 lg:top-3 left-1/2 -translate-x-1/2 z-40 bg-emerald-900 text-white px-4 py-2.5 rounded-2xl shadow-2xl border border-emerald-600/50 flex items-center gap-3 animate-in fade-in slide-in-from-top-3 duration-200">
           <div className="w-8 h-8 rounded-full bg-emerald-700 flex items-center justify-center shrink-0">
             <Check className="w-5 h-5 text-emerald-200 stroke-[3]" />
           </div>
@@ -535,7 +564,7 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
       )}
 
       {/* ================= LEFT SIDE: PRODUCT CATALOG & SEARCH ================= */}
-      <div className="flex-1 flex flex-col h-full border-r border-[#e6dfd5] dark:border-[#362e26] overflow-hidden">
+      <div className={`flex-1 flex-col h-full border-r border-[#e6dfd5] dark:border-[#362e26] overflow-hidden ${mobileTab === 'catalog' ? 'flex' : 'hidden lg:flex'}`}>
         {/* Top Control Bar: Search & Quick Actions */}
         <div className="p-3 bg-white dark:bg-[#1c1815] border-b border-[#e6dfd5] dark:border-[#362e26] flex items-center gap-2">
           {/* Fast Search Input */}
@@ -696,7 +725,7 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
       </div>
 
       {/* ================= RIGHT SIDE: HIGH-SPEED CART & CHECKOUT ================= */}
-      <div className="w-full lg:w-96 xl:w-[420px] bg-white dark:bg-[#1c1815] flex flex-col h-full border-t lg:border-t-0 shrink-0">
+      <div className={`w-full lg:w-96 xl:w-[420px] bg-white dark:bg-[#1c1815] flex-col h-full border-t lg:border-t-0 shrink-0 overflow-hidden ${mobileTab === 'cart' ? 'flex' : 'hidden lg:flex'}`}>
         {/* Cart Header */}
         <div className="p-3 border-b border-[#e6dfd5] dark:border-[#362e26] flex items-center justify-between bg-[#fdfbf7] dark:bg-[#171412]">
           <div className="flex items-center gap-2">
@@ -863,102 +892,117 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
           )}
         </div>
 
-        {/* Cart Totals & Actions Footer */}
-        <div className="p-3 bg-[#fdfbf7] dark:bg-[#171412] border-t border-[#e6dfd5] dark:border-[#362e26] space-y-2">
+        {/* Cart Totals & Actions Footer - Engineered to fit whole screen without scrolling */}
+        <div className="p-2.5 sm:p-3 bg-[#fdfbf7] dark:bg-[#171412] border-t border-[#e6dfd5] dark:border-[#362e26] shrink-0 space-y-2">
           {/* Subtotal & Discounts */}
           <div className="space-y-1 text-xs">
-            <div className="flex justify-between text-stone-500 dark:text-stone-400">
-              <span>Subtotal</span>
-              <span className="font-mono-numbers">{cartSubtotal.toFixed(2)} {settings.currency}</span>
-            </div>
-
-            {/* Cart Discount row */}
-            <div className="flex items-center justify-between text-rose-600 dark:text-rose-400">
-              <button
-                onClick={() => setIsDiscountModalOpen(true)}
-                className="hover:underline flex items-center gap-1 text-[11px]"
-              >
-                <Tag className="w-3 h-3" />
-                <span>
-                  Cart Discount{' '}
-                  {cartDiscountValue > 0 ? `(${cartDiscountValue}${cartDiscountType === 'percent' ? '%' : 'ETB'})` : ''}
-                </span>
-              </button>
-              <span className="font-mono-numbers font-medium">
-                -{cartDiscountAmount.toFixed(2)} {settings.currency}
+            <div className="flex justify-between items-center text-stone-500 dark:text-stone-400">
+              <span className="flex items-center gap-1.5">
+                <span>Subtotal</span>
+                {cartDiscountValue > 0 && (
+                  <span className="text-rose-600 dark:text-rose-400 text-[10px] font-medium">
+                    (Disc: -{cartDiscountAmount.toFixed(2)})
+                  </span>
+                )}
               </span>
+              <div className="flex items-center gap-2 font-mono-numbers">
+                <span>{cartSubtotal.toFixed(2)} {settings.currency}</span>
+                <button
+                  onClick={() => setIsDiscountModalOpen(true)}
+                  className="hover:underline text-[10px] text-emerald-700 dark:text-emerald-400 font-sans cursor-pointer font-bold"
+                  title="Apply Cart Discount"
+                >
+                  {cartDiscountValue > 0 ? 'Edit Disc' : '+ Discount'}
+                </button>
+              </div>
             </div>
 
             {settings.taxRatePercent > 0 && (
-              <div className="flex justify-between text-stone-500 dark:text-stone-400">
+              <div className="flex justify-between text-stone-500 dark:text-stone-400 text-[11px]">
                 <span>Tax ({settings.taxRatePercent}%)</span>
                 <span className="font-mono-numbers">{taxAmount.toFixed(2)} {settings.currency}</span>
               </div>
             )}
 
-            <div className="pt-1.5 border-t border-[#e6dfd5] dark:border-[#362e26] flex items-baseline justify-between">
-              <span className="font-extrabold text-sm text-stone-900 dark:text-stone-100">
-                GRAND TOTAL
+            <div className="pt-1 border-t border-[#e6dfd5] dark:border-[#362e26] flex items-baseline justify-between">
+              <span className="font-extrabold text-xs sm:text-sm text-stone-900 dark:text-stone-100 uppercase tracking-tight">
+                Grand Total
               </span>
               <div className="text-right">
                 <span className="font-black text-xl sm:text-2xl font-mono-numbers text-[#064e3b] dark:text-[#6ee7b7]">
                   {grandTotal.toFixed(2)}
                 </span>
-                <span className="text-xs text-stone-500 ml-1">{settings.currency}</span>
+                <span className="text-xs text-stone-500 ml-1 font-bold">{settings.currency}</span>
               </div>
             </div>
           </div>
 
-          {/* Action Buttons: Scan to Sell, Hold Order & Checkout */}
-          <div className="grid grid-cols-1 gap-2 pt-1">
-            {/* Primary High-Speed "Scan to Sell" Action Bar */}
+          {/* Action Buttons: 1-Click Record & Checkout - Zero Scrolling Required */}
+          <div className="space-y-1.5 pt-0.5">
+            {/* Primary High-Visibility Record Sale Button - Directly on screen */}
             <button
-              onClick={() => setIsCameraScannerOpen(true)}
-              className="w-full py-2.5 px-3 bg-[#064e3b] hover:bg-[#043b2c] text-white font-extrabold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-2 shadow-sm transition cursor-pointer border border-emerald-500/40"
-              title="Open Camera Viewfinder to Scan Barcodes and QR Codes to Sell (F3)"
+              onClick={() => handleQuickRecordSale('cash')}
+              disabled={cart.length === 0}
+              className="w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] disabled:opacity-40 text-white font-black text-xs sm:text-sm rounded-xl flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
+              title="Record sale in ledger immediately without printing any receipt"
             >
-              <QrCode className="w-4 h-4 text-[#6ee7b7]" />
-              <span>SCAN BARCODE / QR TO SELL (F3)</span>
+              <FileText className="w-4 h-4 text-emerald-100" />
+              <span>JUST RECORD SALE (NO PRINT)</span>
             </button>
 
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-3 gap-1.5">
               {/* Hold Order Button (F4) */}
               <button
                 onClick={() => {
                   if (cart.length > 0) setIsHoldInputOpen(true);
                 }}
                 disabled={cart.length === 0}
-                className="py-2.5 px-2 bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 disabled:opacity-40 text-stone-700 dark:text-stone-300 font-bold text-xs rounded-xl flex items-center justify-center gap-1 transition cursor-pointer"
+                className="py-2 px-2 bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 disabled:opacity-40 text-stone-700 dark:text-stone-300 font-bold text-xs rounded-xl flex items-center justify-center gap-1 transition cursor-pointer"
                 title="Park Cart (F4)"
               >
-                <BookmarkPlus className="w-4 h-4" />
-                <span>Hold (F4)</span>
+                <BookmarkPlus className="w-3.5 h-3.5" />
+                <span>Hold</span>
               </button>
 
               {/* Pay / Checkout Button (F8 / F9) */}
               <button
                 onClick={openCheckout}
                 disabled={cart.length === 0}
-                className="col-span-2 py-2.5 px-4 bg-[#064e3b] hover:bg-[#043b2c] disabled:opacity-40 text-white font-extrabold text-sm rounded-xl flex items-center justify-center gap-2 shadow-md transition cursor-pointer"
+                className="col-span-2 py-2 px-3 bg-[#064e3b] hover:bg-[#043b2c] active:scale-[0.99] disabled:opacity-40 text-white font-extrabold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition cursor-pointer"
               >
                 <CreditCard className="w-4 h-4" />
                 <span>PAY &amp; CHECKOUT (F8)</span>
               </button>
             </div>
-
-            {/* Direct 1-Click "Record Sale (No Print)" Button */}
-            <button
-              onClick={() => handleQuickRecordSale('cash')}
-              disabled={cart.length === 0}
-              className="w-full py-2 px-3 bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-100 dark:hover:bg-emerald-900 border border-emerald-300 dark:border-emerald-800 disabled:opacity-40 text-emerald-900 dark:text-emerald-300 font-extrabold text-xs rounded-xl flex items-center justify-center gap-2 transition cursor-pointer"
-              title="Record sale in ledger immediately without printing any receipt"
-            >
-              <FileText className="w-4 h-4 text-emerald-700 dark:text-emerald-400" />
-              <span>JUST RECORD SALE (NO PRINT)</span>
-            </button>
           </div>
         </div>
       </div>
+
+      {/* Mobile Sticky Quick Record Dock if items in cart */}
+      {cart.length > 0 && mobileTab === 'catalog' && (
+        <div className="lg:hidden fixed bottom-14 left-0 right-0 z-30 p-2.5 bg-[#064e3b]/95 backdrop-blur-md border-t border-emerald-600 shadow-2xl flex items-center justify-between gap-2 px-3 text-white">
+          <div onClick={() => setMobileTab('cart')} className="cursor-pointer">
+            <div className="text-[10px] text-emerald-300 uppercase font-bold">{cart.reduce((s, i) => s + i.quantity, 0)} Items In Cart</div>
+            <div className="text-sm font-black font-mono-numbers">{grandTotal.toFixed(2)} {settings.currency}</div>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => handleQuickRecordSale('cash')}
+              className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-stone-950 font-black text-xs rounded-xl shadow-md cursor-pointer flex items-center gap-1"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>RECORD</span>
+            </button>
+            <button
+              onClick={openCheckout}
+              className="px-3 py-1.5 bg-white text-[#064e3b] hover:bg-stone-100 font-black text-xs rounded-xl shadow-md cursor-pointer flex items-center gap-1"
+            >
+              <CreditCard className="w-3.5 h-3.5" />
+              <span>CHECKOUT</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ================= MODAL: HOLD CART INPUT ================= */}
       {isHoldInputOpen && (

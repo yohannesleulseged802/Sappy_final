@@ -11,9 +11,13 @@ import {
   Check,
   AlertCircle,
   Smartphone,
+  BadgeCheck,
+  FileCheck,
+  CheckCircle2,
 } from 'lucide-react';
 import {Customer, StoreSettings, Staff, CreditTransaction} from '../types';
 import {storage} from '../services/storage';
+import {sound} from '../services/sound';
 import {ExportService} from '../services/export';
 
 interface CreditAccountsViewProps {
@@ -40,12 +44,25 @@ export const CreditAccountsView: React.FC<CreditAccountsViewProps> = ({
   const [repayMethod, setRepayMethod] = useState<'cash' | 'mobile_transfer' | 'card'>('cash');
   const [repayNotes, setRepayNotes] = useState('Credit balance payment');
 
+  // Manual Charge Modal State (Requirement: fully manual credit accounts)
+  const [isManualChargeModalOpen, setIsManualChargeModalOpen] = useState(false);
+  const [manualChargeAmount, setManualChargeAmount] = useState<number>(0);
+  const [manualChargeNotes, setManualChargeNotes] = useState('Manual credit purchase / invoice charge');
+
+  // Official "Stamp as Paid" Modal State (Requirement: Stamped Paid fully manual)
+  const [isStampPaidModalOpen, setIsStampPaidModalOpen] = useState(false);
+  const [stampSettledAmount, setStampSettledAmount] = useState<number>(0);
+  const [stampPaymentMethod, setStampPaymentMethod] = useState<'cash' | 'mobile_transfer' | 'card'>('cash');
+  const [stampNotes, setStampNotes] = useState('OFFICIALLY STAMPED PAID (Full Settlement)');
+  const [stampStaff, setStampStaff] = useState<string>(currentStaff.name);
+
   // Customer Form State
   const [custName, setCustName] = useState('');
   const [custPhone, setCustPhone] = useState('');
   const [custEmail, setCustEmail] = useState('');
   const [custCompany, setCustCompany] = useState('');
   const [custCreditLimit, setCustCreditLimit] = useState<number>(10000);
+  const [custInitialBalance, setCustInitialBalance] = useState<number>(0);
   const [custNotes, setCustNotes] = useState('');
 
   const customers = storage.getCustomers();
@@ -74,6 +91,7 @@ export const CreditAccountsView: React.FC<CreditAccountsViewProps> = ({
     setCustEmail('');
     setCustCompany('');
     setCustCreditLimit(15000);
+    setCustInitialBalance(0);
     setCustNotes('');
     setIsCustomerModalOpen(true);
   };
@@ -86,6 +104,8 @@ export const CreditAccountsView: React.FC<CreditAccountsViewProps> = ({
     }
 
     const isNew = !isEditingCustomer;
+    const initialDebt = isNew ? Math.max(0, custInitialBalance) : (isEditingCustomer ? isEditingCustomer.currentBalance : 0);
+
     const customer: Customer = {
       id: isEditingCustomer ? isEditingCustomer.id : `cust-${Date.now()}`,
       name: custName.trim(),
@@ -93,14 +113,25 @@ export const CreditAccountsView: React.FC<CreditAccountsViewProps> = ({
       email: custEmail.trim() || undefined,
       company: custCompany.trim() || undefined,
       creditLimit: custCreditLimit,
-      currentBalance: isEditingCustomer ? isEditingCustomer.currentBalance : 0,
+      currentBalance: initialDebt,
       notes: custNotes,
       createdDate: isEditingCustomer ? isEditingCustomer.createdDate : new Date().toISOString(),
     };
 
     storage.saveCustomer(customer, isNew);
+
+    if (isNew && initialDebt > 0) {
+      storage.addCreditTransaction(
+        customer.id,
+        'CHARGE',
+        initialDebt,
+        'Opening manual credit balance / ledger debt'
+      );
+    }
+
     setIsCustomerModalOpen(false);
     onRefreshData();
+    setSelectedCustomer(customer);
   };
 
   const handleRepaySubmit = (e: React.FormEvent) => {
@@ -121,7 +152,56 @@ export const CreditAccountsView: React.FC<CreditAccountsViewProps> = ({
     setSelectedCustomer(refreshed || null);
     setIsPaymentModalOpen(false);
     setRepayAmount(0);
+    sound.playCheckoutSuccess();
     onRefreshData();
+  };
+
+  const handleManualChargeSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedCustomer || manualChargeAmount <= 0) return;
+
+    storage.addCreditTransaction(
+      selectedCustomer.id,
+      'CHARGE',
+      manualChargeAmount,
+      manualChargeNotes || 'Manual ledger debt charge'
+    );
+
+    const refreshed = storage.getCustomers().find((c) => c.id === selectedCustomer.id);
+    setSelectedCustomer(refreshed || null);
+    setIsManualChargeModalOpen(false);
+    setManualChargeAmount(0);
+    sound.playScanSuccess();
+    onRefreshData();
+  };
+
+  const handleOpenStampPaidModal = () => {
+    if (!selectedCustomer) return;
+    setStampSettledAmount(selectedCustomer.currentBalance);
+    setStampStaff(currentStaff.name);
+    setStampNotes(`OFFICIALLY STAMPED PAID (Full Settlement of ${selectedCustomer.currentBalance.toFixed(2)} ${settings.currency})`);
+    setIsStampPaidModalOpen(true);
+  };
+
+  const handleConfirmStampPaid = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedCustomer) return;
+
+    const res = storage.stampCreditAccountPaid(
+      selectedCustomer.id,
+      stampStaff || currentStaff.name,
+      stampNotes,
+      stampPaymentMethod,
+      stampSettledAmount
+    );
+
+    if (res.success) {
+      sound.playCheckoutSuccess();
+      const refreshed = storage.getCustomers().find((c) => c.id === selectedCustomer.id);
+      setSelectedCustomer(refreshed || null);
+      setIsStampPaidModalOpen(false);
+      onRefreshData();
+    }
   };
 
   return (
@@ -201,6 +281,12 @@ export const CreditAccountsView: React.FC<CreditAccountsViewProps> = ({
                     <span className="block text-[10px] text-stone-400">
                       Limit: {c.creditLimit}
                     </span>
+                    {(c.isStampedPaid || (c.currentBalance === 0 && c.lastPaidDate)) && (
+                      <span className="inline-flex items-center gap-0.5 text-[9px] font-extrabold uppercase px-1.5 py-0.2 rounded-sm bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border border-rose-300 dark:border-rose-800 mt-1">
+                        <BadgeCheck className="w-2.5 h-2.5 text-rose-600" />
+                        <span>STAMPED PAID</span>
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -230,7 +316,7 @@ export const CreditAccountsView: React.FC<CreditAccountsViewProps> = ({
                 </p>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   onClick={() =>
                     ExportService.generateCustomerStatementPDF(
@@ -239,28 +325,75 @@ export const CreditAccountsView: React.FC<CreditAccountsViewProps> = ({
                       settings
                     )
                   }
-                  className="px-3 py-1.5 border border-stone-200 dark:border-stone-700 rounded-xl text-xs font-bold hover:bg-stone-100 dark:hover:bg-stone-800 transition flex items-center gap-1.5"
+                  className="px-3 py-1.5 border border-stone-200 dark:border-stone-700 rounded-xl text-xs font-bold hover:bg-stone-100 dark:hover:bg-stone-800 transition flex items-center gap-1.5 cursor-pointer"
                 >
                   <FileDown className="w-3.5 h-3.5" />
-                  <span>Download Statement PDF</span>
+                  <span>Statement PDF</span>
                 </button>
 
+                {/* Manual Charge Action (Fully manual debt creation) */}
+                <button
+                  onClick={() => {
+                    setManualChargeAmount(0);
+                    setIsManualChargeModalOpen(true);
+                  }}
+                  className="px-3 py-1.5 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900 border border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 cursor-pointer"
+                  title="Manually add a debt charge to this account"
+                >
+                  <Plus className="w-3.5 h-3.5 text-amber-600" />
+                  <span>+ Manual Charge</span>
+                </button>
+
+                {/* Record Repayment Action */}
                 <button
                   onClick={() => {
                     setRepayAmount(selectedCustomer.currentBalance);
                     setIsPaymentModalOpen(true);
                   }}
                   disabled={selectedCustomer.currentBalance <= 0}
-                  className="px-4 py-1.5 bg-[#064e3b] hover:bg-[#043b2c] disabled:opacity-40 text-white rounded-xl text-xs font-extrabold shadow-sm transition flex items-center gap-1.5 cursor-pointer"
+                  className="px-3 py-1.5 bg-stone-100 dark:bg-stone-800 hover:bg-stone-200 dark:hover:bg-stone-700 disabled:opacity-40 text-stone-800 dark:text-stone-200 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 cursor-pointer"
                 >
                   <DollarSign className="w-3.5 h-3.5" />
-                  <span>Record Repayment</span>
+                  <span>Repay</span>
+                </button>
+
+                {/* Official STAMP AS PAID Button (Fully manual settlement) */}
+                <button
+                  onClick={handleOpenStampPaidModal}
+                  disabled={selectedCustomer.currentBalance <= 0 && selectedCustomer.isStampedPaid}
+                  className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 active:scale-[0.99] disabled:opacity-50 text-white rounded-xl text-xs font-black shadow-sm transition flex items-center gap-1.5 cursor-pointer"
+                  title="Officially stamp this credit account as settled and paid"
+                >
+                  <BadgeCheck className="w-4 h-4 text-rose-200" />
+                  <span>STAMP AS PAID</span>
                 </button>
               </div>
             </div>
 
-            {/* Account Summary Cards */}
-            <div className="p-4 grid grid-cols-3 gap-3 border-b border-[#e6dfd5] dark:border-[#362e26] bg-stone-50/50 dark:bg-stone-900/20">
+            {/* Account Summary Cards & Authentic Rubber Stamp */}
+            <div className="relative p-4 grid grid-cols-1 sm:grid-cols-3 gap-3 border-b border-[#e6dfd5] dark:border-[#362e26] bg-stone-50/50 dark:bg-stone-900/20 overflow-hidden">
+              {/* AUTHENTIC OFFICIAL RUBBER STAMP SEAL */}
+              {(selectedCustomer.isStampedPaid || (selectedCustomer.currentBalance === 0 && selectedCustomer.lastPaidDate)) && (
+                <div className="absolute right-4 top-2 z-10 rotate-[-5deg] pointer-events-none select-none animate-in zoom-in-95 duration-200">
+                  <div className="border-3 border-dashed border-rose-600 dark:border-rose-500 rounded-xl px-4 py-2 bg-rose-50/90 dark:bg-rose-950/90 backdrop-blur-xs text-rose-700 dark:text-rose-300 shadow-lg flex flex-col items-center">
+                    <div className="text-[9px] tracking-widest font-extrabold uppercase border-b border-rose-300 dark:border-rose-700 pb-0.5">
+                      ★ SAPPY OFFICIAL LEDGER ★
+                    </div>
+                    <div className="text-xl sm:text-2xl font-black tracking-wider uppercase my-0.5 font-sans text-rose-600 dark:text-rose-400">
+                      STAMPED PAID
+                    </div>
+                    <div className="text-[10px] font-bold tracking-tight">
+                      SETTLED: {selectedCustomer.lastPaidDate ? new Date(selectedCustomer.lastPaidDate).toLocaleDateString() : new Date().toLocaleDateString()}
+                    </div>
+                    {selectedCustomer.lastPaidStaff && (
+                      <div className="text-[9px] font-mono tracking-tighter opacity-80 uppercase">
+                        STAFF: {selectedCustomer.lastPaidStaff}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               <div className="p-3 bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-xl">
                 <div className="text-[10px] text-stone-400 uppercase font-bold">Current Balance Owed</div>
                 <div className="text-lg font-black font-mono-numbers text-amber-600 dark:text-amber-400 mt-1">
@@ -489,19 +622,252 @@ export const CreditAccountsView: React.FC<CreditAccountsViewProps> = ({
                 />
               </div>
 
+              {!isEditingCustomer && (
+                <div>
+                  <label className="block text-xs font-semibold mb-1 text-amber-700 dark:text-amber-300">
+                    Opening Debt / Initial Credit Balance ({settings.currency})
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={custInitialBalance || ''}
+                    onChange={(e) => setCustInitialBalance(Math.max(0, parseFloat(e.target.value) || 0))}
+                    placeholder="0.00 (Enter debt if customer already owes balance)"
+                    className="w-full bg-amber-50/50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded-lg p-2 text-xs font-mono font-bold text-amber-900 dark:text-amber-200"
+                  />
+                  <p className="text-[10px] text-stone-400 mt-0.5">
+                    Leave 0 for clean accounts, or enter starting balance to import existing customer debt.
+                  </p>
+                </div>
+              )}
+
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setIsCustomerModalOpen(false)}
-                  className="px-3 py-1.5 text-xs text-stone-500"
+                  className="px-3 py-1.5 text-xs text-stone-500 cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-1.5 bg-[#064e3b] text-white rounded-lg text-xs font-bold"
+                  className="px-4 py-1.5 bg-[#064e3b] hover:bg-[#043b2c] text-white rounded-lg text-xs font-bold cursor-pointer"
                 >
-                  Create Account
+                  {isEditingCustomer ? 'Update Account' : 'Create Account'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: MANUAL CHARGE (FULLY MANUAL DEBT ADDITION) ================= */}
+      {isManualChargeModalOpen && selectedCustomer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="w-full max-w-sm bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-2xl p-5 shadow-2xl">
+            <div className="flex items-center justify-between pb-2 border-b border-stone-100 dark:border-stone-800 mb-3">
+              <h3 className="font-extrabold text-sm text-stone-900 dark:text-stone-100 flex items-center gap-1.5">
+                <Plus className="w-4 h-4 text-amber-600" />
+                <span>Add Manual Charge / Debt</span>
+              </h3>
+              <button
+                onClick={() => setIsManualChargeModalOpen(false)}
+                className="p-1 text-stone-400 hover:text-stone-700 dark:hover:text-stone-200"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs text-stone-500 mb-3">
+              Customer: <strong className="text-stone-800 dark:text-stone-200">{selectedCustomer.name}</strong> • Current Balance: {selectedCustomer.currentBalance.toFixed(2)} {settings.currency}
+            </p>
+
+            <form onSubmit={handleManualChargeSubmit} className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold mb-1">
+                  Charge Amount ({settings.currency}) *
+                </label>
+                <input
+                  type="number"
+                  min="0.5"
+                  step="0.01"
+                  required
+                  value={manualChargeAmount || ''}
+                  onChange={(e) => setManualChargeAmount(Math.max(0, parseFloat(e.target.value) || 0))}
+                  placeholder="e.g. 2500"
+                  className="w-full bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-lg p-2.5 text-xs font-mono font-bold text-amber-700 dark:text-amber-400"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold mb-1">
+                  Reason / Description / Invoice # *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={manualChargeNotes}
+                  onChange={(e) => setManualChargeNotes(e.target.value)}
+                  placeholder="e.g. 5 Reams Double A Paper + Binding Invoice #104"
+                  className="w-full bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-lg p-2 text-xs"
+                />
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 text-[11px] text-amber-900 dark:text-amber-300">
+                <span>New balance after charge will be: </span>
+                <strong className="font-mono font-bold">
+                  {(selectedCustomer.currentBalance + (manualChargeAmount || 0)).toFixed(2)} {settings.currency}
+                </strong>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsManualChargeModalOpen(false)}
+                  className="px-3 py-1.5 text-xs text-stone-500 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={manualChargeAmount <= 0}
+                  className="px-4 py-1.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-40 text-white rounded-lg text-xs font-bold cursor-pointer"
+                >
+                  Post Manual Charge
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: STAMP AS PAID (FULLY MANUAL STAMPING) ================= */}
+      {isStampPaidModalOpen && selectedCustomer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="w-full max-w-md bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-2xl p-5 shadow-2xl">
+            <div className="flex items-center justify-between pb-2 border-b border-stone-100 dark:border-stone-800 mb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-rose-100 dark:bg-rose-950 text-rose-600 dark:text-rose-400 flex items-center justify-center">
+                  <BadgeCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm text-stone-900 dark:text-stone-100">
+                    Official "Stamp as Paid" Ledger Action
+                  </h3>
+                  <p className="text-[11px] text-stone-500">
+                    Officially clear debt, stamp ledger statement, and record settlement
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsStampPaidModalOpen(false)}
+                className="p-1 text-stone-400 hover:text-stone-700 dark:hover:text-stone-200"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmStampPaid} className="space-y-3">
+              {/* Account summary display */}
+              <div className="p-3 bg-stone-50 dark:bg-stone-800/60 rounded-xl border border-stone-200 dark:border-stone-700 flex justify-between items-center text-xs">
+                <div>
+                  <span className="text-stone-500 block text-[10px] uppercase font-bold">Customer Account</span>
+                  <span className="font-bold text-stone-900 dark:text-stone-100 text-sm">{selectedCustomer.name}</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-stone-500 block text-[10px] uppercase font-bold">Outstanding Balance</span>
+                  <span className="font-mono font-black text-amber-600 dark:text-amber-400 text-sm">
+                    {selectedCustomer.currentBalance.toFixed(2)} {settings.currency}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold mb-1">
+                  Settlement Amount ({settings.currency}) *
+                </label>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  max={selectedCustomer.currentBalance}
+                  required
+                  value={stampSettledAmount || ''}
+                  onChange={(e) => setStampSettledAmount(Math.max(0, parseFloat(e.target.value) || 0))}
+                  className="w-full bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-lg p-2.5 text-xs font-mono font-bold text-rose-600 dark:text-rose-400"
+                />
+                <p className="text-[10px] text-stone-400 mt-0.5">
+                  Pre-filled with full balance ({selectedCustomer.currentBalance.toFixed(2)} {settings.currency}) for complete settlement.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Payment Method</label>
+                  <select
+                    value={stampPaymentMethod}
+                    onChange={(e) => setStampPaymentMethod(e.target.value as any)}
+                    className="w-full bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-lg p-2 text-xs font-medium"
+                  >
+                    <option value="cash">Cash into Drawer</option>
+                    <option value="mobile_transfer">Telebirr / CBE Transfer</option>
+                    <option value="card">Bank Deposit / Card</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Staff Approver</label>
+                  <input
+                    type="text"
+                    required
+                    value={stampStaff}
+                    onChange={(e) => setStampStaff(e.target.value)}
+                    className="w-full bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-lg p-2 text-xs font-medium"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold mb-1">
+                  Official Ledger Stamp Note
+                </label>
+                <input
+                  type="text"
+                  value={stampNotes}
+                  onChange={(e) => setStampNotes(e.target.value)}
+                  placeholder="e.g. OFFICIALLY STAMPED PAID (Full Settlement)"
+                  className="w-full bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-lg p-2 text-xs"
+                />
+              </div>
+
+              {/* Rubber Stamp Preview Box */}
+              <div className="p-3 bg-rose-50/70 dark:bg-rose-950/40 rounded-xl border border-rose-200 dark:border-rose-900/60 flex items-center justify-between">
+                <div className="text-xs text-rose-900 dark:text-rose-200">
+                  <div className="font-bold flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-rose-600" />
+                    <span>Applies Official STAMPED PAID Seal</span>
+                  </div>
+                  <span className="text-[11px] opacity-80">
+                    Remaining balance after stamp will be:{' '}
+                    <strong>{Math.max(0, selectedCustomer.currentBalance - stampSettledAmount).toFixed(2)} {settings.currency}</strong>
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsStampPaidModalOpen(false)}
+                  className="px-3.5 py-2 text-xs text-stone-500 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-rose-600 hover:bg-rose-700 active:scale-[0.99] text-white rounded-xl text-xs font-black shadow-md cursor-pointer flex items-center gap-1.5"
+                >
+                  <BadgeCheck className="w-4 h-4" />
+                  <span>CONFIRM &amp; STAMP AS PAID</span>
                 </button>
               </div>
             </form>

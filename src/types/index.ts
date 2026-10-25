@@ -138,6 +138,10 @@ export interface Customer {
   currentBalance: number; // positive means owes store
   notes?: string;
   createdDate: string;
+  lastPaidDate?: string;
+  lastPaidStaff?: string;
+  lastPaidAmount?: number;
+  isStampedPaid?: boolean;
 }
 
 export interface CreditTransaction {
@@ -152,6 +156,7 @@ export interface CreditTransaction {
   date: string;
   staffName: string;
   notes?: string;
+  isStampPaid?: boolean;
 }
 
 export type SaleStatus = 'COMPLETED' | 'REFUNDED' | 'PARTIALLY_REFUNDED' | 'CANCELLED';

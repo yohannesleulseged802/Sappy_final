@@ -1558,25 +1558,179 @@ class StorageService {
     return null;
   }
 
-  saveProduct(product: Product, isNew: boolean): { success: boolean; error?: string } {
+  /**
+   * Comprehensive Duplicate Detection (SKU, Barcode/QR Code, or Exact Product Name)
+   */
+  findDuplicateProduct(
+    candidate: {
+      id?: string;
+      sku?: string;
+      name?: string;
+      codes?: ProductCode[];
+    },
+    excludeId?: string
+  ): { product: Product; reason: 'sku' | 'code' | 'name'; value: string } | null {
     const products = this.getProducts();
+    const cleanSku = (candidate.sku || '').trim().toLowerCase();
+    const cleanName = (candidate.name || '').trim().toLowerCase();
+    const skipId = excludeId || candidate.id;
 
-    // Check SKU conflict
-    const skuConflict = products.find((p) => p.sku.toLowerCase() === product.sku.toLowerCase() && p.id !== product.id);
-    if (skuConflict) {
-      return { success: false, error: `SKU "${product.sku}" is already assigned to "${skuConflict.name}".` };
+    for (const p of products) {
+      if (skipId && p.id === skipId) continue;
+
+      // 1. Check SKU match
+      if (cleanSku && p.sku.trim().toLowerCase() === cleanSku) {
+        return { product: p, reason: 'sku', value: p.sku };
+      }
+
+      // 2. Check Barcode / QR code matches
+      if (candidate.codes && candidate.codes.length > 0) {
+        for (const c of candidate.codes) {
+          if (c.active && c.code && c.code.trim()) {
+            const cVal = c.code.trim().toLowerCase();
+            const matchingCode = p.codes.find((pc) => pc.active && pc.code.trim().toLowerCase() === cVal);
+            if (matchingCode) {
+              return { product: p, reason: 'code', value: matchingCode.code };
+            }
+          }
+        }
+      }
+
+      // 3. Check Exact Product Name match
+      if (cleanName && p.name.trim().toLowerCase() === cleanName) {
+        return { product: p, reason: 'name', value: p.name };
+      }
     }
 
-    // Check all product codes for uniqueness
-    for (const code of product.codes) {
-      if (code.active) {
-        const conflict = this.findCodeConflict(code.code, product.id);
-        if (conflict) {
-          return {
-            success: false,
-            error: `Code "${code.code}" is already assigned to product "${conflict.conflictingProduct.name}" (${conflict.conflictingCode.label || conflict.conflictingCode.type.toUpperCase()}). Please resolve duplicate before saving.`,
-          };
+    return null;
+  }
+
+  /**
+   * Safely merge incoming product data into an existing product.
+   * Combines stock levels, preserves ID, adds any new codes, and updates cloud database.
+   */
+  mergeProducts(
+    existingProduct: Product,
+    incoming: Partial<Product>,
+    options?: { updatePrice?: boolean }
+  ): Product {
+    const mergedStock = existingProduct.currentStock + (incoming.currentStock || 0);
+
+    // Combine unique codes
+    const existingCodeValues = new Set(existingProduct.codes.map((c) => c.code.trim().toLowerCase()));
+    const combinedCodes: ProductCode[] = [...existingProduct.codes];
+
+    if (incoming.codes && Array.isArray(incoming.codes)) {
+      for (const incCode of incoming.codes) {
+        if (incCode.code && !existingCodeValues.has(incCode.code.trim().toLowerCase())) {
+          combinedCodes.push({
+            ...incCode,
+            id: `code-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+            isPrimary: false,
+          });
+          existingCodeValues.add(incCode.code.trim().toLowerCase());
         }
+      }
+    }
+
+    const mergedProduct: Product = {
+      ...existingProduct,
+      currentStock: mergedStock,
+      sellingPrice:
+        options?.updatePrice && incoming.sellingPrice !== undefined && incoming.sellingPrice > 0
+          ? incoming.sellingPrice
+          : existingProduct.sellingPrice,
+      costPrice:
+        options?.updatePrice && incoming.costPrice !== undefined && incoming.costPrice > 0
+          ? incoming.costPrice
+          : existingProduct.costPrice,
+      wholesalePrice:
+        incoming.wholesalePrice !== undefined && incoming.wholesalePrice > 0
+          ? incoming.wholesalePrice
+          : existingProduct.wholesalePrice,
+      description: incoming.description || existingProduct.description,
+      supplier: incoming.supplier || existingProduct.supplier,
+      codes: combinedCodes,
+      updatedDate: new Date().toISOString(),
+    };
+
+    // Save and sync merged product
+    const allProducts = this.getProducts();
+    const updatedList = allProducts.map((p) => (p.id === existingProduct.id ? mergedProduct : p));
+    this.saveProducts(updatedList);
+    this.pushProductToFirestore(mergedProduct).catch(() => {});
+    this.addAuditLog(
+      'PRODUCT_MERGED',
+      'INVENTORY',
+      `Merged duplicate item "${mergedProduct.name}" (${mergedProduct.sku}). Added ${incoming.currentStock || 0} units to stock. Total now ${mergedStock}.`
+    );
+
+    return mergedProduct;
+  }
+
+  saveProduct(
+    product: Product,
+    isNew: boolean,
+    duplicateResolution?: 'merge' | 'replace'
+  ): {
+    success: boolean;
+    error?: string;
+    duplicateFound?: boolean;
+    existingProduct?: Product;
+    duplicateReason?: 'sku' | 'code' | 'name';
+    duplicateValue?: string;
+  } {
+    const products = this.getProducts();
+
+    if (isNew) {
+      const duplicate = this.findDuplicateProduct(product);
+      if (duplicate) {
+        if (duplicateResolution === 'merge') {
+          this.mergeProducts(duplicate.product, product, { updatePrice: true });
+          return { success: true };
+        } else if (duplicateResolution === 'replace') {
+          // Replace existing product with incoming product details, keeping existing ID
+          const replacedProduct: Product = {
+            ...product,
+            id: duplicate.product.id,
+            updatedDate: new Date().toISOString(),
+          };
+          const updated = products.map((p) => (p.id === duplicate.product.id ? replacedProduct : p));
+          this.saveProducts(updated);
+          this.pushProductToFirestore(replacedProduct).catch(() => {});
+          this.addAuditLog('PRODUCT_REPLACED', 'INVENTORY', `Overwrote existing product with incoming item "${replacedProduct.name}" (${replacedProduct.sku}).`);
+          return { success: true };
+        }
+
+        // Return duplicate details so user can choose to merge or replace
+        const reasonDesc =
+          duplicate.reason === 'sku'
+            ? `SKU "${duplicate.value}" already exists`
+            : duplicate.reason === 'code'
+            ? `Barcode/QR code "${duplicate.value}" already exists`
+            : `Product name "${duplicate.value}" already exists`;
+
+        return {
+          success: false,
+          duplicateFound: true,
+          existingProduct: duplicate.product,
+          duplicateReason: duplicate.reason,
+          duplicateValue: duplicate.value,
+          error: `Duplicate item detected: ${reasonDesc} on "${duplicate.product.name}".`,
+        };
+      }
+    } else {
+      // Editing existing product: check conflict against other products
+      const duplicate = this.findDuplicateProduct(product, product.id);
+      if (duplicate) {
+        return {
+          success: false,
+          duplicateFound: true,
+          existingProduct: duplicate.product,
+          duplicateReason: duplicate.reason,
+          duplicateValue: duplicate.value,
+          error: `Cannot save: conflicting ${duplicate.reason.toUpperCase()} "${duplicate.value}" belongs to "${duplicate.product.name}".`,
+        };
       }
     }
 
@@ -2026,6 +2180,60 @@ class StorageService {
     this.addAuditLog('CREDIT_TRANSACTION', 'CREDIT', `${type} of ${amount} ETB on customer account ${cust.name}. New balance: ${newBalance} ETB.`);
     this.enqueueSync('credit', 'create', tx);
     return { success: true, newBalance };
+  }
+
+  /**
+   * Officially mark & stamp a customer credit account as fully PAID.
+   * Settles balance, records stamped payment transaction, and stores stamping audit details.
+   */
+  stampCreditAccountPaid(
+    customerId: string,
+    staffName: string,
+    notes: string = 'OFFICIALLY STAMPED PAID',
+    method: any = 'cash',
+    customAmount?: number
+  ): { success: boolean; settledAmount: number; customer?: Customer } {
+    const customers = this.getCustomers();
+    const cust = customers.find((c) => c.id === customerId);
+    if (!cust) return { success: false, settledAmount: 0 };
+
+    const settledAmount = customAmount !== undefined ? customAmount : cust.currentBalance;
+    const remainingBalance = Math.max(0, cust.currentBalance - settledAmount);
+
+    cust.currentBalance = remainingBalance;
+    cust.lastPaidDate = new Date().toISOString();
+    cust.lastPaidStaff = staffName;
+    cust.lastPaidAmount = settledAmount;
+    cust.isStampedPaid = remainingBalance === 0;
+
+    this.saveCustomers(customers);
+
+    const tx: CreditTransaction = {
+      id: `ctx-stamp-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      customerId,
+      type: 'PAYMENT',
+      amount: settledAmount,
+      balanceAfter: remainingBalance,
+      paymentMethod: method,
+      date: new Date().toISOString(),
+      staffName,
+      notes: notes || 'OFFICIALLY STAMPED PAID (Full Settlement)',
+      isStampPaid: true,
+    };
+
+    const allTx = this.getCreditTransactions();
+    if (this.isBrowser()) {
+      localStorage.setItem(STORAGE_KEYS.CREDIT_TXS, JSON.stringify([tx, ...allTx]));
+    }
+
+    this.addAuditLog(
+      'CREDIT_STAMPED_PAID',
+      'CREDIT',
+      `Customer account "${cust.name}" officially stamped PAID by ${staffName}. Settled ${settledAmount} ETB.`
+    );
+    this.enqueueSync('credit', 'create', tx);
+
+    return { success: true, settledAmount, customer: cust };
   }
 
   // --- Expenses Tracker ---

@@ -96,6 +96,17 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const [isParsingImport, setIsParsingImport] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
 
+  // Duplicate Conflict Resolution State (Requirement #3: Duplicate Item Insertion Prohibition & Choice)
+  const [duplicateConflict, setDuplicateConflict] = useState<{
+    incomingProduct: Product;
+    existingProduct: Product;
+    reason: 'sku' | 'code' | 'name';
+    value: string;
+  } | null>(null);
+
+  // Bulk Import Duplicate Policy Strategy (Requirement #3)
+  const [importDuplicateStrategy, setImportDuplicateStrategy] = useState<'merge' | 'replace' | 'skip'>('merge');
+
   // Camera Scanner for Product Code Modal
   const [isCameraOpen, setIsCameraOpen] = useState(false);
 
@@ -292,12 +303,50 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
     const result = storage.saveProduct(newProduct, isNew);
     if (!result.success) {
+      if (result.duplicateFound && result.existingProduct) {
+        sound.playError();
+        setDuplicateConflict({
+          incomingProduct: newProduct,
+          existingProduct: result.existingProduct,
+          reason: result.duplicateReason || 'sku',
+          value: result.duplicateValue || '',
+        });
+        return;
+      }
       alert(result.error || 'Failed to save product.');
       return;
     }
 
+    sound.playCheckoutSuccess();
     setIsProductModalOpen(false);
     onRefreshData();
+  };
+
+  // --- Duplicate Conflict Resolution Handlers (Requirement #3) ---
+  const handleResolveMerge = () => {
+    if (!duplicateConflict) return;
+    storage.mergeProducts(duplicateConflict.existingProduct, duplicateConflict.incomingProduct, {
+      updatePrice: true,
+    });
+    sound.playCheckoutSuccess();
+    alert(`Successfully merged duplicate item! Stock combined to ${duplicateConflict.existingProduct.currentStock + duplicateConflict.incomingProduct.currentStock} ${duplicateConflict.existingProduct.unit}.`);
+    setDuplicateConflict(null);
+    setIsProductModalOpen(false);
+    onRefreshData();
+  };
+
+  const handleResolveReplace = () => {
+    if (!duplicateConflict) return;
+    storage.saveProduct(duplicateConflict.incomingProduct, false, 'replace');
+    sound.playCheckoutSuccess();
+    alert(`Existing catalog item was replaced with incoming product details.`);
+    setDuplicateConflict(null);
+    setIsProductModalOpen(false);
+    onRefreshData();
+  };
+
+  const handleResolveCancel = () => {
+    setDuplicateConflict(null);
   };
 
   // --- Stock Adjustment Submit ---
@@ -355,6 +404,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
   const handleConfirmImport = async () => {
     let importedCount = 0;
+    let mergedCount = 0;
+    let skippedCount = 0;
     const existingSkus = new Set(products.map((p) => (p.sku || '').toLowerCase()));
     const newProducts: Product[] = [];
 
@@ -392,10 +443,26 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         createdDate: new Date().toISOString(),
         updatedDate: new Date().toISOString(),
       };
-      const res = storage.saveProduct(prod, true);
-      if (res.success) {
-        importedCount++;
-        newProducts.push(prod);
+
+      // Check if duplicate exists in catalog
+      const duplicate = storage.findDuplicateProduct(prod);
+      if (duplicate) {
+        if (importDuplicateStrategy === 'merge') {
+          storage.mergeProducts(duplicate.product, prod, { updatePrice: true });
+          mergedCount++;
+        } else if (importDuplicateStrategy === 'replace') {
+          storage.saveProduct(prod, false, 'replace');
+          importedCount++;
+        } else {
+          // 'skip'
+          skippedCount++;
+        }
+      } else {
+        const res = storage.saveProduct(prod, true);
+        if (res.success) {
+          importedCount++;
+          newProducts.push(prod);
+        }
       }
     }
 
@@ -404,7 +471,12 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     }
 
     sound.playCheckoutSuccess();
-    alert(`Successfully imported ${importedCount} products into catalog! Synced across all devices.`);
+    const parts = [];
+    if (importedCount > 0) parts.push(`${importedCount} new products added`);
+    if (mergedCount > 0) parts.push(`${mergedCount} duplicates merged & stock combined`);
+    if (skippedCount > 0) parts.push(`${skippedCount} duplicates skipped`);
+
+    alert(`Spreadsheet import complete: ${parts.join(', ') || 'Catalog updated'}! Synced across all devices.`);
     setIsImportModalOpen(false);
     setImportPreviewRows([]);
     setImportErrors([]);
@@ -964,8 +1036,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       {/* ================= MODAL: ADD / EDIT PRODUCT & CODE WORKFLOW ================= */}
       {isProductModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="w-full max-w-2xl bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-2xl shadow-2xl p-5 text-stone-900 dark:text-stone-100 flex flex-col max-h-[92vh] overflow-y-auto">
-            <div className="flex items-center justify-between pb-3 border-b border-stone-100 dark:border-stone-800 mb-3">
+          <div className="w-full max-w-2xl bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-2xl shadow-2xl text-stone-900 dark:text-stone-100 flex flex-col max-h-[90vh] overflow-hidden">
+            <div className="flex items-center justify-between p-4 border-b border-stone-100 dark:border-stone-800 shrink-0 bg-[#fdfbf7] dark:bg-[#171412]">
               <div>
                 <h3 className="font-extrabold text-base text-[#064e3b] dark:text-[#6ee7b7]">
                   {editingProduct ? 'Edit Product Catalog Item' : 'New Product Registration'}
@@ -976,14 +1048,16 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               </div>
               <button
                 onClick={() => setIsProductModalOpen(false)}
-                className="p-1 text-stone-400 hover:text-stone-700 dark:hover:text-stone-200"
+                className="p-1 text-stone-400 hover:text-stone-700 dark:hover:text-stone-200 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveProduct} className="space-y-4">
-              {/* --- Section 1: Basic Product Information --- */}
+            <form onSubmit={handleSaveProduct} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              {/* --- Scrollable Form Body: Save button stays sticky on screen! --- */}
+              <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-5 space-y-4">
+                {/* --- Section 1: Basic Product Information --- */}
               <div>
                 <h4 className="text-xs font-bold uppercase tracking-wider text-stone-500 dark:text-stone-400 mb-2">
                   1. Product Details
@@ -1333,23 +1407,117 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 )}
               </div>
 
-              {/* Form Buttons */}
-              <div className="flex justify-end gap-2 pt-2 border-t border-stone-100 dark:border-stone-800">
+              </div>
+
+              {/* Sticky Form Footer - Always visible on screen without scrolling */}
+              <div className="p-3.5 bg-white/95 dark:bg-stone-900/95 border-t border-stone-200 dark:border-stone-800 backdrop-blur-xs flex justify-end gap-2 shrink-0 z-10">
                 <button
                   type="button"
                   onClick={() => setIsProductModalOpen(false)}
-                  className="px-4 py-2 text-xs font-bold text-stone-600 dark:text-stone-300 hover:bg-stone-100 rounded-lg"
+                  className="px-4 py-2 text-xs font-bold text-stone-600 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 rounded-lg cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-6 py-2 bg-[#064e3b] hover:bg-[#043b2c] text-white text-xs font-extrabold rounded-lg shadow-sm"
+                  className="px-6 py-2 bg-[#064e3b] hover:bg-[#043b2c] active:scale-[0.99] text-white text-xs font-extrabold rounded-lg shadow-sm cursor-pointer"
                 >
                   Save Product
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: DUPLICATE CONFLICT RESOLUTION (Requirement #3) ================= */}
+      {duplicateConflict && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="w-full max-w-lg bg-white dark:bg-stone-900 border-2 border-amber-500 rounded-2xl shadow-2xl p-5 text-stone-900 dark:text-stone-100">
+            <div className="flex items-center gap-2.5 mb-3 text-amber-600 dark:text-amber-400">
+              <AlertTriangle className="w-6 h-6 shrink-0" />
+              <div>
+                <h3 className="font-extrabold text-base leading-tight">
+                  Duplicate Item Detected — Insertion Prohibited
+                </h3>
+                <p className="text-xs text-stone-500 dark:text-stone-400">
+                  A product with the same {duplicateConflict.reason.toUpperCase()} already exists in your store catalog.
+                </p>
+              </div>
+            </div>
+
+            {/* Comparison card */}
+            <div className="grid grid-cols-2 gap-3 p-3 bg-stone-50 dark:bg-stone-800/60 rounded-xl border border-stone-200 dark:border-stone-700 text-xs mb-4">
+              <div className="p-2.5 bg-white dark:bg-stone-900 rounded-lg border border-stone-200 dark:border-stone-700">
+                <span className="text-[10px] uppercase font-bold text-stone-400 block mb-1">
+                  Existing Catalog Item
+                </span>
+                <div className="font-bold text-sm truncate" title={duplicateConflict.existingProduct.name}>
+                  {duplicateConflict.existingProduct.name}
+                </div>
+                <div className="text-stone-500 font-mono text-[11px] mt-0.5">SKU: {duplicateConflict.existingProduct.sku}</div>
+                <div className="mt-2 text-stone-700 dark:text-stone-300">
+                  Current Stock: <strong className="font-mono text-emerald-600">{duplicateConflict.existingProduct.currentStock} {duplicateConflict.existingProduct.unit}</strong>
+                </div>
+                <div className="text-stone-700 dark:text-stone-300 text-[11px]">
+                  Price: <span className="font-mono">{duplicateConflict.existingProduct.sellingPrice.toFixed(2)} {settings.currency}</span>
+                </div>
+              </div>
+
+              <div className="p-2.5 bg-amber-50/60 dark:bg-amber-950/40 rounded-lg border border-amber-300 dark:border-amber-800">
+                <span className="text-[10px] uppercase font-bold text-amber-700 dark:text-amber-300 block mb-1">
+                  Incoming New Item
+                </span>
+                <div className="font-bold text-sm truncate" title={duplicateConflict.incomingProduct.name}>
+                  {duplicateConflict.incomingProduct.name}
+                </div>
+                <div className="text-stone-500 font-mono text-[11px] mt-0.5">SKU: {duplicateConflict.incomingProduct.sku}</div>
+                <div className="mt-2 text-stone-700 dark:text-stone-300">
+                  Incoming Stock: <strong className="font-mono text-amber-700 dark:text-amber-300">+{duplicateConflict.incomingProduct.currentStock} {duplicateConflict.incomingProduct.unit}</strong>
+                </div>
+                <div className="text-stone-700 dark:text-stone-300 text-[11px]">
+                  Price: <span className="font-mono">{duplicateConflict.incomingProduct.sellingPrice.toFixed(2)} {settings.currency}</span>
+                </div>
+              </div>
+            </div>
+
+            <p className="text-xs text-stone-600 dark:text-stone-300 mb-3 font-medium">
+              Duplicate insertion is forbidden. Choose how you want to resolve this conflict:
+            </p>
+
+            {/* Resolution Buttons */}
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={handleResolveMerge}
+                className="w-full p-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white rounded-xl text-xs font-bold transition flex items-center justify-between cursor-pointer"
+              >
+                <div className="flex items-center gap-2">
+                  <Check className="w-4 h-4" />
+                  <span>Merge Items (Combine Stock into Existing Item)</span>
+                </div>
+                <span className="text-[10px] bg-emerald-700 px-2 py-0.5 rounded-full font-sans">
+                  Total: {duplicateConflict.existingProduct.currentStock + duplicateConflict.incomingProduct.currentStock} {duplicateConflict.existingProduct.unit}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleResolveReplace}
+                className="w-full p-2.5 bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 text-stone-800 dark:text-stone-200 rounded-xl text-xs font-bold transition flex items-center justify-between cursor-pointer"
+              >
+                <span>Replace / Overwrite Existing Item Details</span>
+                <span className="text-[10px] text-stone-500 font-normal">Keep existing ID</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleResolveCancel}
+                className="w-full p-2 text-stone-500 hover:text-stone-800 dark:hover:text-stone-200 text-xs font-semibold cursor-pointer"
+              >
+                Cancel / Keep Existing Item Untouched
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1495,6 +1663,57 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 ))}
               </div>
             )}
+
+            {/* Duplicate Item Policy Selector (Requirement #3) */}
+            <div className="p-2.5 bg-stone-50 dark:bg-stone-800/60 border border-stone-200 dark:border-stone-700 rounded-xl mb-3 text-xs">
+              <div className="flex items-center justify-between mb-1.5 font-bold">
+                <span className="text-stone-800 dark:text-stone-200">Duplicate Conflict Resolution Policy:</span>
+                <span className="text-[10px] text-amber-700 dark:text-amber-300 font-bold">*Duplicate insertions strictly prohibited</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setImportDuplicateStrategy('merge')}
+                  className={`p-2 rounded-lg text-left border transition cursor-pointer ${
+                    importDuplicateStrategy === 'merge'
+                      ? 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-500 text-emerald-900 dark:text-emerald-300 font-bold shadow-xs'
+                      : 'bg-white dark:bg-stone-900 border-stone-200 dark:border-stone-700 text-stone-600 dark:text-stone-400'
+                  }`}
+                >
+                  <div className="flex items-center gap-1 font-bold">
+                    <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span>Merge (Combine Stock)</span>
+                  </div>
+                  <div className="text-[10px] opacity-75 mt-0.5">Recommended: Combines stock quantity into existing catalog items</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setImportDuplicateStrategy('replace')}
+                  className={`p-2 rounded-lg text-left border transition cursor-pointer ${
+                    importDuplicateStrategy === 'replace'
+                      ? 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-500 text-emerald-900 dark:text-emerald-300 font-bold shadow-xs'
+                      : 'bg-white dark:bg-stone-900 border-stone-200 dark:border-stone-700 text-stone-600 dark:text-stone-400'
+                  }`}
+                >
+                  <div className="font-bold">Replace / Overwrite</div>
+                  <div className="text-[10px] opacity-75 mt-0.5">Overwrites existing catalog items with file details</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setImportDuplicateStrategy('skip')}
+                  className={`p-2 rounded-lg text-left border transition cursor-pointer ${
+                    importDuplicateStrategy === 'skip'
+                      ? 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-500 text-emerald-900 dark:text-emerald-300 font-bold shadow-xs'
+                      : 'bg-white dark:bg-stone-900 border-stone-200 dark:border-stone-700 text-stone-600 dark:text-stone-400'
+                  }`}
+                >
+                  <div className="font-bold">Skip Duplicates</div>
+                  <div className="text-[10px] opacity-75 mt-0.5">Keeps existing catalog items and skips duplicates in file</div>
+                </button>
+              </div>
+            </div>
 
             <div className="flex-1 overflow-y-auto border border-stone-200 dark:border-stone-800 rounded-xl mb-4 text-xs">
               <table className="w-full text-left">
