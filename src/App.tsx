@@ -261,7 +261,7 @@ export default function App() {
 
   // ================= SCENARIO 2: AUTHENTICATED POS WORKSPACE =================
   return (
-    <div className="min-h-screen bg-[#fdfbf7] dark:bg-[#12100e] text-[#26201b] dark:text-[#f5f1e8] flex flex-col font-sans transition-colors duration-200">
+    <div className="h-screen h-[100dvh] max-h-[100dvh] overflow-hidden bg-[#fdfbf7] dark:bg-[#12100e] text-[#26201b] dark:text-[#f5f1e8] flex flex-col font-sans transition-colors duration-200">
       {/* 1. Global Header Bar */}
       <Navbar
         currentStaff={currentStaff}
@@ -275,9 +275,9 @@ export default function App() {
       />
 
       {/* 2. Main Workstation Area: Sidebar + Active View */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 min-h-0 flex overflow-hidden">
         {/* Desktop Sidebar (hidden on mobile) */}
-        <div className="hidden md:block">
+        <div className="hidden md:block shrink-0 h-full">
           <Sidebar
             currentSection={currentSection}
             onSelectSection={setCurrentSection}
@@ -288,7 +288,7 @@ export default function App() {
         </div>
 
         {/* Dynamic View Panel */}
-        <main className="flex-1 flex flex-col overflow-hidden pb-14 md:pb-0">
+        <main className="flex-1 min-h-0 flex flex-col overflow-hidden pb-14 md:pb-0">
           {currentSection === 'dashboard' && (
             <DashboardView
               products={products}

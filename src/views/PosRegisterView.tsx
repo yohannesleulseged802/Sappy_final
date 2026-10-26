@@ -506,7 +506,7 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
   const heldOrders = storage.getHeldOrders();
 
   return (
-    <div className="flex-1 flex flex-col lg:flex-row h-[calc(100vh-3.5rem)] overflow-hidden bg-[#fdfbf7] dark:bg-[#12100e] relative">
+    <div className="flex-1 min-h-0 flex flex-col lg:flex-row h-full max-h-full overflow-hidden bg-[#fdfbf7] dark:bg-[#12100e] relative">
       {/* Mobile / Small Screen View Switcher (< lg) */}
       <div className="lg:hidden flex items-center justify-between border-b border-[#e6dfd5] dark:border-[#362e26] bg-[#f5f1e8] dark:bg-[#1a1613] p-1.5 shrink-0 z-20">
         <button
@@ -725,73 +725,75 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
       </div>
 
       {/* ================= RIGHT SIDE: HIGH-SPEED CART & CHECKOUT ================= */}
-      <div className={`w-full lg:w-96 xl:w-[420px] bg-white dark:bg-[#1c1815] flex-col h-full border-t lg:border-t-0 shrink-0 overflow-hidden ${mobileTab === 'cart' ? 'flex' : 'hidden lg:flex'}`}>
-        {/* Cart Header */}
-        <div className="p-3 border-b border-[#e6dfd5] dark:border-[#362e26] flex items-center justify-between bg-[#fdfbf7] dark:bg-[#171412]">
-          <div className="flex items-center gap-2">
-            <h2 className="font-extrabold text-sm text-[#064e3b] dark:text-[#6ee7b7]">
-              Current Cart ({cart.reduce((s, i) => s + i.quantity, 0)})
-            </h2>
-            <button
-              onClick={() => setIsCameraScannerOpen(true)}
-              className="px-2 py-1 bg-emerald-100 hover:bg-emerald-200 dark:bg-emerald-950 dark:hover:bg-emerald-900 text-[#064e3b] dark:text-[#6ee7b7] rounded-lg text-xs font-bold flex items-center gap-1 transition cursor-pointer"
-              title="Open QR Code / Barcode Scanner to Sell"
-            >
-              <QrCode className="w-3.5 h-3.5" />
-              <span>Scan to Sell</span>
-            </button>
-          </div>
-
-          <div className="flex items-center gap-1">
-            {/* Customer Selector (F6) */}
-            <button
-              onClick={() => setIsCustomerModalOpen(true)}
-              className={`px-2 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition ${
-                selectedCustomer
-                  ? 'bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300'
-                  : 'bg-white dark:bg-stone-900 text-stone-700 dark:text-stone-300 border-stone-200 dark:border-stone-800 hover:bg-stone-50'
-              }`}
-              title="Assign Customer or Store Credit (F6)"
-            >
-              <UserPlus className="w-3.5 h-3.5" />
-              <span className="max-w-[100px] truncate">
-                {selectedCustomer ? selectedCustomer.name.split(' ')[0] : 'Walk-in'}
-              </span>
-            </button>
-
-            {/* Clear Cart */}
-            {cart.length > 0 && (
+      <div className={`w-full lg:w-96 xl:w-[420px] bg-white dark:bg-[#1c1815] flex flex-col h-full max-h-full border-t lg:border-t-0 shrink-0 overflow-hidden ${mobileTab === 'cart' ? 'flex' : 'hidden lg:flex'}`}>
+        {/* 1. Cart Header */}
+        <div className="shrink-0 bg-[#fdfbf7] dark:bg-[#171412] border-b border-[#e6dfd5] dark:border-[#362e26]">
+          <div className="p-3 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h2 className="font-extrabold text-sm text-[#064e3b] dark:text-[#6ee7b7]">
+                Current Cart ({cart.reduce((s, i) => s + i.quantity, 0)})
+              </h2>
               <button
-                onClick={() => setCart([])}
-                className="p-1 text-stone-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/40 transition"
-                title="Clear Entire Cart"
+                onClick={() => setIsCameraScannerOpen(true)}
+                className="px-2 py-1 bg-emerald-100 hover:bg-emerald-200 dark:bg-emerald-950 dark:hover:bg-emerald-900 text-[#064e3b] dark:text-[#6ee7b7] rounded-lg text-xs font-bold flex items-center gap-1 transition cursor-pointer"
+                title="Open QR Code / Barcode Scanner to Sell"
               >
-                <Trash2 className="w-4 h-4" />
+                <QrCode className="w-3.5 h-3.5" />
+                <span>Scan to Sell</span>
               </button>
-            )}
+            </div>
+
+            <div className="flex items-center gap-1">
+              {/* Customer Selector (F6) */}
+              <button
+                onClick={() => setIsCustomerModalOpen(true)}
+                className={`px-2 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition ${
+                  selectedCustomer
+                    ? 'bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300'
+                    : 'bg-white dark:bg-stone-900 text-stone-700 dark:text-stone-300 border-stone-200 dark:border-stone-800 hover:bg-stone-50'
+                }`}
+                title="Assign Customer or Store Credit (F6)"
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                <span className="max-w-[100px] truncate">
+                  {selectedCustomer ? selectedCustomer.name.split(' ')[0] : 'Walk-in'}
+                </span>
+              </button>
+
+              {/* Clear Cart */}
+              {cart.length > 0 && (
+                <button
+                  onClick={() => setCart([])}
+                  className="p-1 text-stone-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/40 transition"
+                  title="Clear Entire Cart"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
+            </div>
           </div>
+
+          {/* Selected Customer Sub-strip */}
+          {selectedCustomer && (
+            <div className="px-3 py-1.5 bg-emerald-50 dark:bg-emerald-950/40 border-t border-emerald-200 dark:border-emerald-900/60 flex items-center justify-between text-xs text-emerald-900 dark:text-emerald-300">
+              <div>
+                <span className="font-bold">{selectedCustomer.name}</span>
+                <span className="text-[10px] ml-1.5 opacity-80">
+                  (Bal: {selectedCustomer.currentBalance} / Limit: {selectedCustomer.creditLimit})
+                </span>
+              </div>
+              <button
+                onClick={() => setSelectedCustomer(null)}
+                className="text-emerald-700 dark:text-emerald-400 hover:underline text-[10px]"
+              >
+                Remove
+              </button>
+            </div>
+          )}
         </div>
 
-        {/* Selected Customer Banner */}
-        {selectedCustomer && (
-          <div className="px-3 py-1.5 bg-emerald-50 dark:bg-emerald-950/40 border-b border-emerald-200 dark:border-emerald-900/60 flex items-center justify-between text-xs text-emerald-900 dark:text-emerald-300">
-            <div>
-              <span className="font-bold">{selectedCustomer.name}</span>
-              <span className="text-[10px] ml-1.5 opacity-80">
-                (Bal: {selectedCustomer.currentBalance} / Limit: {selectedCustomer.creditLimit})
-              </span>
-            </div>
-            <button
-              onClick={() => setSelectedCustomer(null)}
-              className="text-emerald-700 dark:text-emerald-400 hover:underline text-[10px]"
-            >
-              Remove
-            </button>
-          </div>
-        )}
-
-        {/* Cart Items List */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-2">
+        {/* 2. Cart Items List */}
+        <div className="flex-1 min-h-0 max-h-full overflow-y-auto p-2.5 sm:p-3 space-y-2">
           {cart.map((item) => {
             const hasDiscount = item.discountValue && item.discountValue > 0;
             const itemPrice = item.sellingPrice;
@@ -892,8 +894,8 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
           )}
         </div>
 
-        {/* Cart Totals & Actions Footer - Engineered to fit whole screen without scrolling */}
-        <div className="p-2.5 sm:p-3 bg-[#fdfbf7] dark:bg-[#171412] border-t border-[#e6dfd5] dark:border-[#362e26] shrink-0 space-y-2">
+        {/* 3. Cart Totals & Actions Footer - Engineered to fit whole screen without scrolling */}
+        <div className="p-2.5 sm:p-3 bg-[#fdfbf7] dark:bg-[#171412] border-t border-[#e6dfd5] dark:border-[#362e26] shrink-0 space-y-2 mt-auto">
           {/* Subtotal & Discounts */}
           <div className="space-y-1 text-xs">
             <div className="flex justify-between items-center text-stone-500 dark:text-stone-400">
