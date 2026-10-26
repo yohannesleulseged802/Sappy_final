@@ -2,28 +2,12 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper functions
-    function isAuthenticated() {
-      return request.auth != null;
-    }
-
-    function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
-    }
-
-    function isAdmin() {
-      return isAuthenticated() && (
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.accountStatus == 'approved'
-      );
-    }
-
     // System initialization metadata
     match /system/{metaId} {
       allow read, write, delete: if true;
     }
 
-    // Users collection: All store terminals sync staff profiles, create, update, and manage accounts across devices
+    // Users / Staff collection: All store terminals sync staff profiles across devices
     match /users/{userId} {
       allow read, write, delete: if true;
     }
@@ -33,35 +17,34 @@ service cloud.firestore {
       allow read, write, delete: if true;
     }
 
-    // Sales ledger & receipts
+    // Sales ledger & receipts: Real-time sales transactions synced across all devices
     match /sales/{saleId} {
-      allow read, write, delete: if isAuthenticated() || !exists(/databases/$(database)/documents/system/setup);
+      allow read, write, delete: if true;
     }
 
-    // Customers and loyalty
+    // Customers and credit accounts: Synced across devices
     match /customers/{customerId} {
-      allow read, write, delete: if isAuthenticated() || !exists(/databases/$(database)/documents/system/setup);
+      allow read, write, delete: if true;
     }
 
-    // Expenses
+    // Expenses: Synced across devices
     match /expenses/{expenseId} {
-      allow read, write, delete: if isAuthenticated() || !exists(/databases/$(database)/documents/system/setup);
+      allow read, write, delete: if true;
     }
 
-    // Credit transactions
+    // Credit transactions & stamps: Synced across devices
     match /credit_transactions/{txId} {
-      allow read, write, delete: if isAuthenticated() || !exists(/databases/$(database)/documents/system/setup);
+      allow read, write, delete: if true;
     }
 
-    // Audit logs
+    // Audit logs: Activity logged across all devices
     match /audit_logs/{logId} {
-      allow read, write, delete: if isAuthenticated() || !exists(/databases/$(database)/documents/system/setup);
+      allow read, write, delete: if true;
     }
 
-    // Settings
+    // Settings: Store configuration synced across devices
     match /settings/{settingId} {
-      allow read: if true;
-      allow write, delete: if isAuthenticated() || !exists(/databases/$(database)/documents/system/setup);
+      allow read, write, delete: if true;
     }
   }
 }

@@ -191,42 +191,58 @@ export default function App() {
     refreshAllData();
   };
 
-  // Cross-device continuous uniformity synchronization (Requirement: Uniform Across Devices)
+  // Cross-device continuous uniformity synchronization across all store collections
   useEffect(() => {
     let isMounted = true;
 
-    // Real-time Firebase Database Staff Synchronization
+    // 1. Staff accounts
     const unsubscribeStaff = storage.syncStaffWithFirestore(() => {
       if (!isMounted) return;
       refreshAllData();
     });
 
-    // Real-time Firebase Database Product Catalog Synchronization across all devices
+    // 2. Product catalog
     const unsubscribeProducts = storage.syncProductsWithFirestore((updatedProducts) => {
       if (!isMounted) return;
       setProducts(updatedProducts);
     });
 
-    const syncInterval = setInterval(async () => {
-      if (!isMounted || !isOnline) return;
-      const res = await storage.syncAllDataWithBackend();
+    // 3. Sales ledger & receipts
+    const unsubscribeSales = storage.syncSalesWithFirestore((updatedSales) => {
       if (!isMounted) return;
-      if (res.wiped) {
-        handleSignOut();
-      } else {
-        refreshAllData();
-      }
-    }, 7000);
+      setSales(updatedSales);
+    });
+
+    // 4. Customers & credit balances
+    const unsubscribeCustomers = storage.syncCustomersWithFirestore(() => {
+      if (!isMounted) return;
+      refreshAllData();
+    });
+
+    // 5. Credit transactions & stamps
+    const unsubscribeCredit = storage.syncCreditTransactionsWithFirestore(() => {
+      if (!isMounted) return;
+      refreshAllData();
+    });
+
+    // 6. Store expenses
+    const unsubscribeExpenses = storage.syncExpensesWithFirestore(() => {
+      if (!isMounted) return;
+      refreshAllData();
+    });
+
+    // 7. Store settings
+    const unsubscribeSettings = storage.syncSettingsWithFirestore((updatedSettings) => {
+      if (!isMounted) return;
+      setSettings(updatedSettings);
+    });
+
+    // Initial proactive upload of any existing local data to Firestore
+    storage.syncEverythingWithFirestore().catch(() => {});
 
     const handleFocus = async () => {
       if (!isMounted || !isOnline) return;
-      const res = await storage.syncAllDataWithBackend();
-      if (!isMounted) return;
-      if (res.wiped) {
-        handleSignOut();
-      } else {
-        refreshAllData();
-      }
+      refreshAllData();
     };
 
     window.addEventListener('focus', handleFocus);
@@ -235,7 +251,11 @@ export default function App() {
       isMounted = false;
       unsubscribeStaff();
       unsubscribeProducts();
-      clearInterval(syncInterval);
+      unsubscribeSales();
+      unsubscribeCustomers();
+      unsubscribeCredit();
+      unsubscribeExpenses();
+      unsubscribeSettings();
       window.removeEventListener('focus', handleFocus);
     };
   }, [isOnline, refreshAllData]);

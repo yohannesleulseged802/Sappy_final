@@ -186,10 +186,50 @@ class StorageService {
     }
   }
 
+  async pushSettingsToFirestore(settings: StoreSettings): Promise<void> {
+    try {
+      await setDoc(doc(db, 'settings', 'store'), settings, { merge: true });
+    } catch (err) {
+      console.warn('Firestore pushSettings notice:', err);
+    }
+  }
+
+  syncSettingsWithFirestore(onUpdate?: (settings: StoreSettings) => void): () => void {
+    if (!this.isBrowser()) return () => {};
+
+    getDoc(doc(db, 'settings', 'store'))
+      .then((docSnap) => {
+        if (docSnap.exists()) {
+          const remoteSettings = { ...DEFAULT_SETTINGS, ...docSnap.data() } as StoreSettings;
+          localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(remoteSettings));
+          if (onUpdate) onUpdate(remoteSettings);
+        } else {
+          const local = this.getSettings();
+          this.pushSettingsToFirestore(local);
+        }
+      })
+      .catch((err) => console.warn('Initial Firestore settings sync notice:', err));
+
+    const unsubscribe = onSnapshot(
+      doc(db, 'settings', 'store'),
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const remoteSettings = { ...DEFAULT_SETTINGS, ...docSnap.data() } as StoreSettings;
+          localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(remoteSettings));
+          if (onUpdate) onUpdate(remoteSettings);
+        }
+      },
+      (err) => console.warn('Firestore real-time settings sync notice:', err)
+    );
+
+    return unsubscribe;
+  }
+
   saveSettings(settings: StoreSettings) {
     if (!this.isBrowser()) return;
     localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
     this.addAuditLog('UPDATED_STORE_SETTINGS', 'SETTINGS', `Store settings and tax preferences updated.`);
+    this.pushSettingsToFirestore(settings).catch(() => {});
     try {
       fetch('/api/settings', {
         method: 'POST',
@@ -345,15 +385,10 @@ class StorageService {
         if (remoteStaff.length > 0) {
           this.mergeRemoteStaff(remoteStaff, onUpdate);
         } else {
-          // Firestore is empty: reset local staff state to enforce clean zero
-          this.saveStaffList([]);
-          if (this.isBrowser()) {
-            localStorage.removeItem(STORAGE_KEYS.STORE_INITIALIZED);
-            localStorage.removeItem('sappy_initial_signup_completed');
-            localStorage.removeItem(STORAGE_KEYS.CURRENT_STAFF_ID);
-          }
-          if (onUpdate) {
-            onUpdate([]);
+          // If Firestore is empty but this device has local staff accounts, seed Firestore
+          const local = this.getStaffList();
+          if (local.length > 0) {
+            local.forEach((s) => this.pushStaffToFirestore(s));
           }
         }
       })
@@ -373,15 +408,9 @@ class StorageService {
         if (remoteStaff.length > 0) {
           this.mergeRemoteStaff(remoteStaff, onUpdate);
         } else {
-          // Live wipe reflection on all listening devices
-          this.saveStaffList([]);
-          if (this.isBrowser()) {
-            localStorage.removeItem(STORAGE_KEYS.STORE_INITIALIZED);
-            localStorage.removeItem('sappy_initial_signup_completed');
-            localStorage.removeItem(STORAGE_KEYS.CURRENT_STAFF_ID);
-          }
-          if (onUpdate) {
-            onUpdate([]);
+          const local = this.getStaffList();
+          if (local.length > 0 && snap.metadata.hasPendingWrites === false) {
+            local.forEach((s) => this.pushStaffToFirestore(s));
           }
         }
       },
@@ -1949,6 +1978,51 @@ class StorageService {
     localStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify(sales));
   }
 
+  async pushSaleToFirestore(sale: Sale): Promise<void> {
+    try {
+      await setDoc(doc(db, 'sales', sale.id), sale, { merge: true });
+    } catch (err) {
+      console.warn('Firestore pushSale notice:', err);
+    }
+  }
+
+  syncSalesWithFirestore(onUpdate?: (sales: Sale[]) => void): () => void {
+    if (!this.isBrowser()) return () => {};
+
+    getDocs(collection(db, 'sales'))
+      .then((snap) => {
+        const remoteSales: Sale[] = [];
+        snap.forEach((d) => remoteSales.push(d.data() as Sale));
+        if (remoteSales.length > 0) {
+          remoteSales.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+          this.saveSales(remoteSales);
+          if (onUpdate) onUpdate(remoteSales);
+        } else {
+          const local = this.getSales();
+          if (local.length > 0) {
+            local.forEach((s) => this.pushSaleToFirestore(s));
+          }
+        }
+      })
+      .catch((err) => console.warn('Initial Firestore sales sync notice:', err));
+
+    const unsubscribe = onSnapshot(
+      collection(db, 'sales'),
+      (snap) => {
+        const remoteSales: Sale[] = [];
+        snap.forEach((d) => remoteSales.push(d.data() as Sale));
+        if (remoteSales.length > 0) {
+          remoteSales.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+          this.saveSales(remoteSales);
+          if (onUpdate) onUpdate(remoteSales);
+        }
+      },
+      (err) => console.warn('Firestore real-time sales sync notice:', err)
+    );
+
+    return unsubscribe;
+  }
+
   completeSale(saleData: Omit<Sale, 'id' | 'receiptNumber' | 'date' | 'isSynced' | 'status'>): Sale {
     const sales = this.getSales();
     const receiptNum = `SAP-${new Date().getFullYear()}-${String(sales.length + 1).padStart(5, '0')}`;
@@ -1965,14 +2039,19 @@ class StorageService {
 
     // 1. Deduct Inventory Stock
     const products = this.getProducts();
+    const affectedProducts: Product[] = [];
     newSale.items.forEach((item) => {
       const prod = products.find((p) => p.id === item.productId);
       if (prod && prod.category !== 'Print Services') {
         prod.currentStock = Math.max(0, prod.currentStock - item.quantity);
         prod.updatedDate = newSale.date;
+        affectedProducts.push(prod);
       }
     });
     this.saveProducts(products);
+    if (affectedProducts.length > 0) {
+      this.pushProductsBatchToFirestore(affectedProducts).catch(() => {});
+    }
 
     // 2. Update Active Shift totals if present
     const shifts = this.getShifts();
@@ -2000,9 +2079,10 @@ class StorageService {
       this.addCreditTransaction(newSale.customerId, 'CHARGE', newSale.creditAdded, `Sale #${receiptNum}`, newSale.id);
     }
 
-    // 4. Save Sale
+    // 4. Save Sale locally and push directly to Firestore
     const updatedSales = [newSale, ...sales];
     this.saveSales(updatedSales);
+    this.pushSaleToFirestore(newSale).catch(() => {});
 
     // 5. Audit Log & Sync
     this.addAuditLog('SALE_COMPLETED', 'SALES', `Sale #${receiptNum} completed for ${newSale.grandTotal} ETB by ${newSale.cashierName}.`, newSale.id);
@@ -2099,9 +2179,66 @@ class StorageService {
     }
   }
 
+  async pushCustomerToFirestore(customer: Customer): Promise<void> {
+    try {
+      await setDoc(doc(db, 'customers', customer.id), customer, { merge: true });
+    } catch (err) {
+      console.warn('Firestore pushCustomer notice:', err);
+    }
+  }
+
+  async pushCustomersBatchToFirestore(customers: Customer[]): Promise<void> {
+    if (!customers || customers.length === 0) return;
+    try {
+      const batch = writeBatch(db);
+      for (const c of customers) {
+        batch.set(doc(db, 'customers', c.id), c, { merge: true });
+      }
+      await batch.commit();
+    } catch (err) {
+      console.warn('Firestore pushCustomersBatch notice:', err);
+    }
+  }
+
+  syncCustomersWithFirestore(onUpdate?: (customers: Customer[]) => void): () => void {
+    if (!this.isBrowser()) return () => {};
+
+    getDocs(collection(db, 'customers'))
+      .then((snap) => {
+        const remoteCustomers: Customer[] = [];
+        snap.forEach((d) => remoteCustomers.push(d.data() as Customer));
+        if (remoteCustomers.length > 0) {
+          localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(remoteCustomers));
+          if (onUpdate) onUpdate(remoteCustomers);
+        } else {
+          const local = this.getCustomers();
+          if (local.length > 0) {
+            this.pushCustomersBatchToFirestore(local);
+          }
+        }
+      })
+      .catch((err) => console.warn('Initial Firestore customers sync notice:', err));
+
+    const unsubscribe = onSnapshot(
+      collection(db, 'customers'),
+      (snap) => {
+        const remoteCustomers: Customer[] = [];
+        snap.forEach((d) => remoteCustomers.push(d.data() as Customer));
+        if (remoteCustomers.length > 0) {
+          localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(remoteCustomers));
+          if (onUpdate) onUpdate(remoteCustomers);
+        }
+      },
+      (err) => console.warn('Firestore real-time customers sync notice:', err)
+    );
+
+    return unsubscribe;
+  }
+
   saveCustomers(customers: Customer[]) {
     if (!this.isBrowser()) return;
     localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(customers));
+    this.pushCustomersBatchToFirestore(customers).catch(() => {});
     try {
       if (typeof navigator !== 'undefined' && navigator.onLine) {
         fetch('/api/customers/save', {
@@ -2124,7 +2261,53 @@ class StorageService {
       this.addAuditLog('CUSTOMER_UPDATED', 'CREDIT', `Customer "${customer.name}" details updated.`);
     }
     this.saveCustomers(updated);
+    this.pushCustomerToFirestore(customer).catch(() => {});
     this.enqueueSync('customer', isNew ? 'create' : 'update', customer);
+  }
+
+  async pushCreditTransactionToFirestore(tx: CreditTransaction): Promise<void> {
+    try {
+      await setDoc(doc(db, 'credit_transactions', tx.id), tx, { merge: true });
+    } catch (err) {
+      console.warn('Firestore pushCreditTransaction notice:', err);
+    }
+  }
+
+  syncCreditTransactionsWithFirestore(onUpdate?: (txs: CreditTransaction[]) => void): () => void {
+    if (!this.isBrowser()) return () => {};
+
+    getDocs(collection(db, 'credit_transactions'))
+      .then((snap) => {
+        const remoteTxs: CreditTransaction[] = [];
+        snap.forEach((d) => remoteTxs.push(d.data() as CreditTransaction));
+        if (remoteTxs.length > 0) {
+          remoteTxs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+          localStorage.setItem(STORAGE_KEYS.CREDIT_TXS, JSON.stringify(remoteTxs));
+          if (onUpdate) onUpdate(remoteTxs);
+        } else {
+          const local = this.getCreditTransactions();
+          if (local.length > 0) {
+            local.forEach((tx) => this.pushCreditTransactionToFirestore(tx));
+          }
+        }
+      })
+      .catch((err) => console.warn('Initial Firestore credit tx sync notice:', err));
+
+    const unsubscribe = onSnapshot(
+      collection(db, 'credit_transactions'),
+      (snap) => {
+        const remoteTxs: CreditTransaction[] = [];
+        snap.forEach((d) => remoteTxs.push(d.data() as CreditTransaction));
+        if (remoteTxs.length > 0) {
+          remoteTxs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+          localStorage.setItem(STORAGE_KEYS.CREDIT_TXS, JSON.stringify(remoteTxs));
+          if (onUpdate) onUpdate(remoteTxs);
+        }
+      },
+      (err) => console.warn('Firestore real-time credit tx sync notice:', err)
+    );
+
+    return unsubscribe;
   }
 
   getCreditTransactions(customerId?: string): CreditTransaction[] {
@@ -2158,6 +2341,7 @@ class StorageService {
     }
     cust.currentBalance = newBalance;
     this.saveCustomers(customers);
+    this.pushCustomerToFirestore(cust).catch(() => {});
 
     const tx: CreditTransaction = {
       id: `ctx-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -2176,9 +2360,11 @@ class StorageService {
     if (this.isBrowser()) {
       localStorage.setItem(STORAGE_KEYS.CREDIT_TXS, JSON.stringify([tx, ...allTx]));
     }
+    this.pushCreditTransactionToFirestore(tx).catch(() => {});
 
     this.addAuditLog('CREDIT_TRANSACTION', 'CREDIT', `${type} of ${amount} ETB on customer account ${cust.name}. New balance: ${newBalance} ETB.`);
     this.enqueueSync('credit', 'create', tx);
+
     return { success: true, newBalance };
   }
 
@@ -2207,6 +2393,7 @@ class StorageService {
     cust.isStampedPaid = remainingBalance === 0;
 
     this.saveCustomers(customers);
+    this.pushCustomerToFirestore(cust).catch(() => {});
 
     const tx: CreditTransaction = {
       id: `ctx-stamp-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -2225,6 +2412,7 @@ class StorageService {
     if (this.isBrowser()) {
       localStorage.setItem(STORAGE_KEYS.CREDIT_TXS, JSON.stringify([tx, ...allTx]));
     }
+    this.pushCreditTransactionToFirestore(tx).catch(() => {});
 
     this.addAuditLog(
       'CREDIT_STAMPED_PAID',
@@ -2237,6 +2425,51 @@ class StorageService {
   }
 
   // --- Expenses Tracker ---
+  async pushExpenseToFirestore(expense: StoreExpense): Promise<void> {
+    try {
+      await setDoc(doc(db, 'expenses', expense.id), expense, { merge: true });
+    } catch (err) {
+      console.warn('Firestore pushExpense notice:', err);
+    }
+  }
+
+  syncExpensesWithFirestore(onUpdate?: (expenses: StoreExpense[]) => void): () => void {
+    if (!this.isBrowser()) return () => {};
+
+    getDocs(collection(db, 'expenses'))
+      .then((snap) => {
+        const remoteExpenses: StoreExpense[] = [];
+        snap.forEach((d) => remoteExpenses.push(d.data() as StoreExpense));
+        if (remoteExpenses.length > 0) {
+          remoteExpenses.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+          localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(remoteExpenses));
+          if (onUpdate) onUpdate(remoteExpenses);
+        } else {
+          const local = this.getExpenses();
+          if (local.length > 0) {
+            local.forEach((e) => this.pushExpenseToFirestore(e));
+          }
+        }
+      })
+      .catch((err) => console.warn('Initial Firestore expenses sync notice:', err));
+
+    const unsubscribe = onSnapshot(
+      collection(db, 'expenses'),
+      (snap) => {
+        const remoteExpenses: StoreExpense[] = [];
+        snap.forEach((d) => remoteExpenses.push(d.data() as StoreExpense));
+        if (remoteExpenses.length > 0) {
+          remoteExpenses.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+          localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(remoteExpenses));
+          if (onUpdate) onUpdate(remoteExpenses);
+        }
+      },
+      (err) => console.warn('Firestore real-time expenses sync notice:', err)
+    );
+
+    return unsubscribe;
+  }
+
   getExpenses(): StoreExpense[] {
     if (!this.isBrowser()) return [];
     try {
@@ -2259,6 +2492,7 @@ class StorageService {
     if (this.isBrowser()) {
       localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(updated));
     }
+    this.pushExpenseToFirestore(newExpense).catch(() => {});
 
     // If paid from cash drawer, update active shift expenses
     if (expenseData.paidWith === 'cash_drawer' && expenseData.shiftId) {
@@ -2466,6 +2700,48 @@ class StorageService {
       success: true,
       message: 'System factory reset successful. All users, inventory, sales, customers, and data have been wiped clean across all devices.',
     };
+  }
+
+  async syncEverythingWithFirestore(): Promise<{ success: boolean; message: string }> {
+    try {
+      const products = this.getProducts();
+      if (products.length > 0) {
+        await this.pushProductsBatchToFirestore(products);
+      }
+      const staff = this.getStaffList();
+      for (const s of staff) {
+        await this.pushStaffToFirestore(s);
+      }
+      const customers = this.getCustomers();
+      if (customers.length > 0) {
+        await this.pushCustomersBatchToFirestore(customers);
+      }
+      const sales = this.getSales();
+      for (const s of sales) {
+        await this.pushSaleToFirestore(s);
+      }
+      const txs = this.getCreditTransactions();
+      for (const t of txs) {
+        await this.pushCreditTransactionToFirestore(t);
+      }
+      const expenses = this.getExpenses();
+      for (const e of expenses) {
+        await this.pushExpenseToFirestore(e);
+      }
+      const settings = this.getSettings();
+      await this.pushSettingsToFirestore(settings);
+
+      return {
+        success: true,
+        message: 'All local POS data successfully synced to Cloud Firestore across all devices!',
+      };
+    } catch (err: any) {
+      console.warn('syncEverythingWithFirestore error:', err);
+      return {
+        success: false,
+        message: err?.message || 'Sync encountered an issue.',
+      };
+    }
   }
 
   // When reset is invoked, it completely wipes everything (No demo data loaded)

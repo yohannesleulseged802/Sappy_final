@@ -13,6 +13,8 @@ import {
   Users,
   QrCode,
   Sparkles,
+  Calendar,
+  ArrowRight,
 } from 'lucide-react';
 import {Product, Sale, StoreSettings, Staff, StoreExpense} from '../types';
 import {storage} from '../services/storage';
@@ -33,6 +35,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onNavigate,
 }) => {
   const expenses = storage.getExpenses();
+  const customers = storage.getCustomers();
   const heldOrders = storage.getHeldOrders();
   const syncQueue = storage.getSyncQueue();
 
@@ -86,6 +89,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     });
     const estimatedGrossProfit = Math.max(0, todayTotal - todayCogs);
 
+    // Pending store credit across all customer accounts
+    const totalPendingCredit = customers.reduce((sum, c) => sum + (c.currentBalance || 0), 0);
+    const customersWithCreditCount = customers.filter((c) => (c.currentBalance || 0) > 0).length;
+
+    const todayFormatted = now.toLocaleDateString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    });
+
     return {
       todayTotal,
       weeklyTotal,
@@ -102,8 +115,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       creditSalesTotal,
       totalExpenses,
       estimatedGrossProfit,
+      totalPendingCredit,
+      customersWithCreditCount,
+      todayFormatted,
     };
-  }, [sales, products, expenses]);
+  }, [sales, products, expenses, customers]);
 
   return (
     <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-[#fdfbf7] dark:bg-[#12100e] space-y-6">
@@ -142,6 +158,148 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <QrCode className="w-4 h-4" />
             <span className="hidden sm:inline">Label Studio</span>
           </button>
+        </div>
+      </div>
+
+      {/* ================= DAILY HIGHLIGHTS SPOTLIGHT CARD ================= */}
+      <div className="rounded-2xl bg-white dark:bg-[#1c1815] border border-[#e6dfd5] dark:border-[#362e26] shadow-sm overflow-hidden">
+        {/* Card Header Strip */}
+        <div className="p-3.5 sm:p-4 bg-[#fdfbf7] dark:bg-[#171412] border-b border-[#e6dfd5] dark:border-[#362e26] flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-900/60 flex items-center justify-center text-[#064e3b] dark:text-[#6ee7b7] shadow-2xs">
+              <Sparkles className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-extrabold text-sm sm:text-base text-stone-900 dark:text-stone-100 tracking-tight">
+                  Daily Highlights
+                </h3>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-100 dark:bg-emerald-950 text-[#064e3b] dark:text-[#6ee7b7] border border-emerald-200 dark:border-emerald-800">
+                  Quick Overview
+                </span>
+              </div>
+              <p className="text-xs text-stone-500 dark:text-stone-400">
+                Key daily overview of revenue, store credit, and inventory reorder status
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-[#f5f1e8] dark:bg-[#25201b] border border-[#e6dfd5] dark:border-[#362e26] text-xs font-bold text-stone-600 dark:text-stone-300 font-mono">
+              <Calendar className="w-3.5 h-3.5 text-[#064e3b] dark:text-[#6ee7b7]" />
+              <span>{metrics.todayFormatted}</span>
+            </span>
+          </div>
+        </div>
+
+        {/* 3 Metric Spotlight Columns */}
+        <div className="p-3.5 sm:p-5 grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4 bg-gradient-to-b from-transparent to-[#fbf9f4]/40 dark:to-[#171412]/20">
+          {/* Highlight 1: Total Sales */}
+          <div
+            onClick={() => onNavigate('sales')}
+            className="group relative p-4 rounded-xl bg-white dark:bg-[#1c1815] border border-emerald-100 dark:border-emerald-950/70 hover:border-emerald-400 dark:hover:border-emerald-700/80 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between"
+          >
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                  Total Sales
+                </span>
+                <div className="w-7 h-7 rounded-lg bg-emerald-50 dark:bg-emerald-950/80 border border-emerald-200 dark:border-emerald-800 text-[#064e3b] dark:text-[#6ee7b7] flex items-center justify-center transition group-hover:scale-105">
+                  <TrendingUp className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-2xl sm:text-3xl font-black font-mono-numbers text-[#064e3b] dark:text-[#6ee7b7]">
+                  {metrics.todayTotal.toFixed(2)}
+                </span>
+                <span className="text-xs font-bold text-stone-400">{settings.currency}</span>
+              </div>
+            </div>
+
+            <div className="mt-3 pt-3 border-t border-stone-100 dark:border-stone-800/80 flex items-center justify-between text-xs text-stone-500 dark:text-stone-400">
+              <span className="font-medium">
+                {metrics.todayTxCount} sale{metrics.todayTxCount === 1 ? '' : 's'} recorded today
+              </span>
+              <span className="text-[#064e3b] dark:text-[#6ee7b7] font-bold flex items-center gap-0.5 group-hover:translate-x-0.5 transition-transform">
+                <span>Ledger</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </span>
+            </div>
+          </div>
+
+          {/* Highlight 2: Pending Store Credit */}
+          <div
+            onClick={() => onNavigate('credit')}
+            className="group relative p-4 rounded-xl bg-white dark:bg-[#1c1815] border border-amber-100 dark:border-amber-950/70 hover:border-amber-400 dark:hover:border-amber-700/80 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between"
+          >
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                  Pending Credit
+                </span>
+                <div className="w-7 h-7 rounded-lg bg-amber-50 dark:bg-amber-950/80 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400 flex items-center justify-center transition group-hover:scale-105">
+                  <CreditCard className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-2xl sm:text-3xl font-black font-mono-numbers text-amber-600 dark:text-amber-400">
+                  {metrics.totalPendingCredit.toFixed(2)}
+                </span>
+                <span className="text-xs font-bold text-stone-400">{settings.currency}</span>
+              </div>
+            </div>
+
+            <div className="mt-3 pt-3 border-t border-stone-100 dark:border-stone-800/80 flex items-center justify-between text-xs text-stone-500 dark:text-stone-400">
+              <span className="font-medium">
+                {metrics.customersWithCreditCount} customer account{metrics.customersWithCreditCount === 1 ? '' : 's'} with balance
+              </span>
+              <span className="text-amber-700 dark:text-amber-400 font-bold flex items-center gap-0.5 group-hover:translate-x-0.5 transition-transform">
+                <span>Accounts</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </span>
+            </div>
+          </div>
+
+          {/* Highlight 3: Low-Stock Count */}
+          <div
+            onClick={() => onNavigate('inventory')}
+            className="group relative p-4 rounded-xl bg-white dark:bg-[#1c1815] border border-rose-100 dark:border-rose-950/70 hover:border-rose-400 dark:hover:border-rose-700/80 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between"
+          >
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                  Low-Stock Count
+                </span>
+                <div className={`w-7 h-7 rounded-lg flex items-center justify-center transition group-hover:scale-105 border ${
+                  metrics.lowStockCount > 0
+                    ? 'bg-rose-50 dark:bg-rose-950/80 border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-400'
+                    : 'bg-emerald-50 dark:bg-emerald-950/80 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400'
+                }`}>
+                  <AlertTriangle className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="flex items-baseline gap-1.5">
+                <span className={`text-2xl sm:text-3xl font-black font-mono-numbers ${metrics.lowStockCount > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-700 dark:text-emerald-400'}`}>
+                  {metrics.lowStockCount}
+                </span>
+                <span className="text-xs font-bold text-stone-400">items</span>
+              </div>
+            </div>
+
+            <div className="mt-3 pt-3 border-t border-stone-100 dark:border-stone-800/80 flex items-center justify-between text-xs text-stone-500 dark:text-stone-400">
+              <span className="font-medium">
+                {metrics.outOfStockCount > 0
+                  ? `${metrics.outOfStockCount} out of stock`
+                  : metrics.lowStockCount > 0
+                  ? 'Items require restock'
+                  : 'All items stocked'}
+              </span>
+              <span className="text-rose-700 dark:text-rose-400 font-bold flex items-center gap-0.5 group-hover:translate-x-0.5 transition-transform">
+                <span>Inventory</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </span>
+            </div>
+          </div>
         </div>
       </div>
 

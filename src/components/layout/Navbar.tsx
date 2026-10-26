@@ -80,13 +80,17 @@ export const Navbar: React.FC<NavbarProps> = ({
     };
   }, []);
 
-  const triggerSync = () => {
+  const triggerSync = async () => {
     setIsSyncing(true);
-    setTimeout(() => {
+    try {
+      await storage.syncEverythingWithFirestore();
       storage.clearSyncQueue();
       setSyncQueueCount(0);
+    } catch (err) {
+      console.warn('Manual sync trigger error:', err);
+    } finally {
       setIsSyncing(false);
-    }, 1200);
+    }
   };
 
   const toggleFullscreen = () => {

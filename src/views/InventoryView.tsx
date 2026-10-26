@@ -785,10 +785,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
           {/* Cloud Sync Button */}
           <button
             onClick={async () => {
-              const local = storage.getProducts();
-              if (local.length > 0) {
-                await storage.pushProductsBatchToFirestore(local);
-              }
+              await storage.syncEverythingWithFirestore();
               onRefreshData();
               sound.playScanSuccess();
             }}
