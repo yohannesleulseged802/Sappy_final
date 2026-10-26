@@ -584,7 +584,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col h-[calc(100vh-3.5rem)] overflow-hidden bg-[#fdfbf7] dark:bg-[#12100e]">
+    <div className="flex-1 min-h-0 flex flex-col h-full max-h-full overflow-hidden bg-[#fdfbf7] dark:bg-[#12100e]">
       {/* Batch Action Bar for Selected Items */}
       {selectedProductIds.size > 0 && (
         <div className="p-2.5 px-4 bg-emerald-50 dark:bg-[#142920] border-b border-emerald-200 dark:border-emerald-900/60 flex flex-wrap items-center justify-between gap-2 text-xs animate-in fade-in">

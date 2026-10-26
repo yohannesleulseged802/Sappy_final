@@ -14,6 +14,7 @@ import {
   BadgeCheck,
   FileCheck,
   CheckCircle2,
+  ArrowLeft,
 } from 'lucide-react';
 import {Customer, StoreSettings, Staff, CreditTransaction} from '../types';
 import {storage} from '../services/storage';
@@ -205,9 +206,9 @@ export const CreditAccountsView: React.FC<CreditAccountsViewProps> = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col md:flex-row h-[calc(100vh-3.5rem)] overflow-hidden bg-[#fdfbf7] dark:bg-[#12100e]">
+    <div className="flex-1 min-h-0 flex flex-col md:flex-row h-full max-h-full overflow-hidden bg-[#fdfbf7] dark:bg-[#12100e]">
       {/* ================= LEFT COLUMN: CUSTOMER DIRECTORY ================= */}
-      <div className="w-full md:w-80 lg:w-96 bg-white dark:bg-[#1c1815] border-r border-[#e6dfd5] dark:border-[#362e26] flex flex-col h-full shrink-0">
+      <div className={`w-full md:w-80 lg:w-96 bg-white dark:bg-[#1c1815] border-r border-[#e6dfd5] dark:border-[#362e26] flex-1 md:flex-none flex flex-col h-full shrink-0 overflow-hidden ${selectedCustomer ? 'hidden md:flex' : 'flex'}`}>
         <div className="p-3 border-b border-[#e6dfd5] dark:border-[#362e26] space-y-2">
           <div className="flex items-center justify-between">
             <h2 className="font-extrabold text-sm text-[#064e3b] dark:text-[#6ee7b7] flex items-center gap-1.5">
@@ -302,18 +303,28 @@ export const CreditAccountsView: React.FC<CreditAccountsViewProps> = ({
       </div>
 
       {/* ================= RIGHT COLUMN: CUSTOMER LEDGER STATEMENT ================= */}
-      <div className="flex-1 flex flex-col h-full overflow-hidden bg-white dark:bg-[#1c1815]">
+      <div className={`flex-1 min-h-0 flex flex-col h-full overflow-hidden bg-white dark:bg-[#1c1815] ${selectedCustomer ? 'flex' : 'hidden md:flex'}`}>
         {selectedCustomer ? (
           <>
             {/* Header with Customer Info & Actions */}
-            <div className="p-4 border-b border-[#e6dfd5] dark:border-[#362e26] flex flex-wrap items-center justify-between gap-3 bg-[#fdfbf7] dark:bg-[#171412]">
-              <div>
-                <h3 className="font-extrabold text-base text-stone-900 dark:text-stone-100">
-                  {selectedCustomer.name}
-                </h3>
-                <p className="text-xs text-stone-500 font-mono">
-                  {selectedCustomer.phone} {selectedCustomer.email ? `• ${selectedCustomer.email}` : ''}
-                </p>
+            <div className="p-3 sm:p-4 border-b border-[#e6dfd5] dark:border-[#362e26] flex flex-wrap items-center justify-between gap-3 bg-[#fdfbf7] dark:bg-[#171412]">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setSelectedCustomer(null)}
+                  className="md:hidden px-2 py-1 rounded-lg text-stone-600 dark:text-stone-300 hover:bg-stone-200 dark:hover:bg-stone-800 flex items-center gap-1 text-xs font-bold transition cursor-pointer border border-stone-200 dark:border-stone-700"
+                  title="Back to Customer List"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>List</span>
+                </button>
+                <div>
+                  <h3 className="font-extrabold text-base text-stone-900 dark:text-stone-100">
+                    {selectedCustomer.name}
+                  </h3>
+                  <p className="text-xs text-stone-500 font-mono">
+                    {selectedCustomer.phone} {selectedCustomer.email ? `• ${selectedCustomer.email}` : ''}
+                  </p>
+                </div>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">

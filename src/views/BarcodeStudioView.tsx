@@ -52,6 +52,7 @@ export const BarcodeStudioView: React.FC<BarcodeStudioViewProps> = ({
   const [showPrice, setShowPrice] = useState(true);
   const [showSku, setShowSku] = useState(true);
   const [showProductName, setShowProductName] = useState(true);
+  const [mobileTab, setMobileTab] = useState<'controls' | 'preview'>('controls');
 
   // Individual Code View Modal State
   const [individualViewProduct, setIndividualViewProduct] = useState<Product | null>(null);
@@ -310,9 +311,35 @@ export const BarcodeStudioView: React.FC<BarcodeStudioViewProps> = ({
   const totalStickersCount = flatLabels.length;
 
   return (
-    <div className="flex-1 flex flex-col xl:flex-row h-[calc(100vh-3.5rem)] overflow-hidden bg-[#fdfbf7] dark:bg-[#12100e]">
+    <div className="flex-1 min-h-0 flex flex-col xl:flex-row h-full max-h-full overflow-hidden bg-[#fdfbf7] dark:bg-[#12100e]">
+      {/* Mobile / Small Screen View Switcher (< xl) */}
+      <div className="xl:hidden flex items-center justify-between border-b border-[#e6dfd5] dark:border-[#362e26] bg-[#f5f1e8] dark:bg-[#1a1613] p-1.5 shrink-0 z-20">
+        <button
+          onClick={() => setMobileTab('controls')}
+          className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+            mobileTab === 'controls'
+              ? 'bg-[#064e3b] text-white shadow-xs'
+              : 'text-stone-600 dark:text-stone-300 hover:bg-stone-200/60 dark:hover:bg-stone-800'
+          }`}
+        >
+          <QrCode className="w-3.5 h-3.5" />
+          <span>Queue &amp; Settings ({selectedLabels.length})</span>
+        </button>
+        <button
+          onClick={() => setMobileTab('preview')}
+          className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+            mobileTab === 'preview'
+              ? 'bg-[#064e3b] text-white shadow-xs'
+              : 'text-stone-600 dark:text-stone-300 hover:bg-stone-200/60 dark:hover:bg-stone-800'
+          }`}
+        >
+          <Printer className="w-3.5 h-3.5" />
+          <span>Live Sheet ({totalStickersCount} Stickers)</span>
+        </button>
+      </div>
+
       {/* ================= LEFT CONTROLS: QUEUE & GENERATOR ================= */}
-      <div className="w-full xl:w-96 bg-white dark:bg-[#1c1815] border-r border-[#e6dfd5] dark:border-[#362e26] flex flex-col h-full shrink-0 overflow-y-auto">
+      <div className={`w-full xl:w-96 bg-white dark:bg-[#1c1815] border-r border-[#e6dfd5] dark:border-[#362e26] flex-1 min-h-0 xl:flex-none flex-col h-full shrink-0 overflow-y-auto ${mobileTab === 'controls' ? 'flex' : 'hidden xl:flex'}`}>
         {/* Header */}
         <div className="p-4 border-b border-[#e6dfd5] dark:border-[#362e26]">
           <div className="flex items-center justify-between">
@@ -798,7 +825,7 @@ export const BarcodeStudioView: React.FC<BarcodeStudioViewProps> = ({
       </div>
 
       {/* ================= RIGHT PREVIEW: LIVE PRINTABLE SHEET ================= */}
-      <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#e6dfd5]/40 dark:bg-[#151210]">
+      <div className={`flex-1 min-h-0 flex-col h-full overflow-hidden bg-[#e6dfd5]/40 dark:bg-[#151210] ${mobileTab === 'preview' ? 'flex' : 'hidden xl:flex'}`}>
         <div className="p-3 bg-white/80 dark:bg-[#1c1815]/80 border-b border-[#e6dfd5] dark:border-[#362e26] flex items-center justify-between text-xs">
           <div className="flex items-center gap-2">
             <span className="font-bold text-stone-700 dark:text-stone-300">

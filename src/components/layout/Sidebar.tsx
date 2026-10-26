@@ -134,7 +134,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   );
 
   return (
-    <aside className="w-64 bg-white dark:bg-[#1c1815] border-r border-[#e6dfd5] dark:border-[#362e26] flex flex-col h-[calc(100vh-3.5rem)] shrink-0 select-none overflow-y-auto">
+    <aside className="w-64 bg-white dark:bg-[#1c1815] border-r border-[#e6dfd5] dark:border-[#362e26] flex flex-col h-full shrink-0 select-none overflow-y-auto">
       {/* POS Highlight Quick Card (if permitted for role) */}
       {isPermittedForRole('pos', currentStaff.role) && (
         <div className="p-3 border-b border-[#e6dfd5] dark:border-[#362e26]">

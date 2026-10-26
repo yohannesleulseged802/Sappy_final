@@ -71,7 +71,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
   return (
     <>
       {/* Bottom Sticky Mobile Navigation Bar */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-[#1c1815]/95 backdrop-blur-md border-t border-[#e6dfd5] dark:border-[#362e26] px-2 py-1 flex items-center justify-around safe-area-bottom">
+      <nav aria-label="Mobile Navigation" className="md:hidden shrink-0 z-40 bg-white/95 dark:bg-[#1c1815]/95 backdrop-blur-md border-t border-[#e6dfd5] dark:border-[#362e26] px-2 py-1 flex items-center justify-around safe-area-bottom">
         {filteredMainTabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = currentSection === tab.id;
@@ -108,7 +108,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
           <MoreHorizontal className="w-5 h-5" />
           <span className="text-[10px] mt-0.5">More</span>
         </button>
-      </div>
+      </nav>
 
       {/* Slide-over Mobile Drawer */}
       {drawerOpen && (

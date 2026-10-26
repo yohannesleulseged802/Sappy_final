@@ -564,7 +564,7 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
       )}
 
       {/* ================= LEFT SIDE: PRODUCT CATALOG & SEARCH ================= */}
-      <div className={`flex-1 flex-col h-full border-r border-[#e6dfd5] dark:border-[#362e26] overflow-hidden ${mobileTab === 'catalog' ? 'flex' : 'hidden lg:flex'}`}>
+      <div className={`flex-1 min-h-0 flex-col h-full border-r border-[#e6dfd5] dark:border-[#362e26] overflow-hidden ${mobileTab === 'catalog' ? 'flex' : 'hidden lg:flex'}`}>
         {/* Top Control Bar: Search & Quick Actions */}
         <div className="p-3 bg-white dark:bg-[#1c1815] border-b border-[#e6dfd5] dark:border-[#362e26] flex items-center gap-2">
           {/* Fast Search Input */}
@@ -641,7 +641,7 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
         </div>
 
         {/* Products Grid */}
-        <div className="flex-1 overflow-y-auto p-3 grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2.5 content-start">
+        <div className="flex-1 overflow-y-auto p-3 grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2.5 content-start pb-24 lg:pb-3">
           {filteredProducts.map((p) => {
             const isOutOfStock = p.currentStock <= 0 && p.category !== 'Print Services';
             const isLowStock = p.currentStock <= p.minStockThreshold && !isOutOfStock;
@@ -725,7 +725,7 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
       </div>
 
       {/* ================= RIGHT SIDE: HIGH-SPEED CART & CHECKOUT ================= */}
-      <div className={`w-full lg:w-96 xl:w-[420px] bg-white dark:bg-[#1c1815] flex flex-col h-full max-h-full border-t lg:border-t-0 shrink-0 overflow-hidden ${mobileTab === 'cart' ? 'flex' : 'hidden lg:flex'}`}>
+      <div className={`w-full lg:w-96 xl:w-[420px] bg-white dark:bg-[#1c1815] flex-1 min-h-0 lg:flex-none flex flex-col h-full max-h-full border-t lg:border-t-0 shrink-0 overflow-hidden ${mobileTab === 'cart' ? 'flex' : 'hidden lg:flex'}`}>
         {/* 1. Cart Header */}
         <div className="shrink-0 bg-[#fdfbf7] dark:bg-[#171412] border-b border-[#e6dfd5] dark:border-[#362e26]">
           <div className="p-3 flex items-center justify-between">
@@ -982,7 +982,7 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
 
       {/* Mobile Sticky Quick Record Dock if items in cart */}
       {cart.length > 0 && mobileTab === 'catalog' && (
-        <div className="lg:hidden fixed bottom-14 left-0 right-0 z-30 p-2.5 bg-[#064e3b]/95 backdrop-blur-md border-t border-emerald-600 shadow-2xl flex items-center justify-between gap-2 px-3 text-white">
+        <div className="lg:hidden absolute bottom-0 left-0 right-0 z-30 p-2.5 bg-[#064e3b]/95 backdrop-blur-md border-t border-emerald-600 shadow-2xl flex items-center justify-between gap-2 px-3 text-white">
           <div onClick={() => setMobileTab('cart')} className="cursor-pointer">
             <div className="text-[10px] text-emerald-300 uppercase font-bold">{cart.reduce((s, i) => s + i.quantity, 0)} Items In Cart</div>
             <div className="text-sm font-black font-mono-numbers">{grandTotal.toFixed(2)} {settings.currency}</div>
