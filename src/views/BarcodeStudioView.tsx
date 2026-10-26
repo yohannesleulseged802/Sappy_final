@@ -339,7 +339,7 @@ export const BarcodeStudioView: React.FC<BarcodeStudioViewProps> = ({
       </div>
 
       {/* ================= LEFT CONTROLS: QUEUE & GENERATOR ================= */}
-      <div className={`w-full xl:w-96 bg-white dark:bg-[#1c1815] border-r border-[#e6dfd5] dark:border-[#362e26] flex-1 min-h-0 xl:flex-none flex-col h-full shrink-0 overflow-y-auto ${mobileTab === 'controls' ? 'flex' : 'hidden xl:flex'}`}>
+      <div className={`w-full xl:w-96 bg-white dark:bg-[#1c1815] border-r border-[#e6dfd5] dark:border-[#362e26] flex-1 min-h-0 xl:flex-none flex-col xl:h-full xl:shrink-0 overflow-y-auto touch-scroll overscroll-contain pb-24 xl:pb-4 ${mobileTab === 'controls' ? 'flex' : 'hidden xl:flex'}`}>
         {/* Header */}
         <div className="p-4 border-b border-[#e6dfd5] dark:border-[#362e26]">
           <div className="flex items-center justify-between">
@@ -825,7 +825,7 @@ export const BarcodeStudioView: React.FC<BarcodeStudioViewProps> = ({
       </div>
 
       {/* ================= RIGHT PREVIEW: LIVE PRINTABLE SHEET ================= */}
-      <div className={`flex-1 min-h-0 flex-col h-full overflow-hidden bg-[#e6dfd5]/40 dark:bg-[#151210] ${mobileTab === 'preview' ? 'flex' : 'hidden xl:flex'}`}>
+      <div className={`flex-1 min-h-0 flex-col xl:h-full overflow-hidden bg-[#e6dfd5]/40 dark:bg-[#151210] ${mobileTab === 'preview' ? 'flex' : 'hidden xl:flex'}`}>
         <div className="p-3 bg-white/80 dark:bg-[#1c1815]/80 border-b border-[#e6dfd5] dark:border-[#362e26] flex items-center justify-between text-xs">
           <div className="flex items-center gap-2">
             <span className="font-bold text-stone-700 dark:text-stone-300">
@@ -865,7 +865,7 @@ export const BarcodeStudioView: React.FC<BarcodeStudioViewProps> = ({
         </div>
 
         {/* Scrollable Printable Canvas Container */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 flex justify-center">
+        <div className="flex-1 min-h-0 overflow-y-auto touch-scroll overscroll-contain p-4 sm:p-6 pb-24 xl:pb-6 flex justify-center">
           <div
             id="thermal-receipt-area"
             className={`bg-white text-black shadow-xl p-4 transition-all ${

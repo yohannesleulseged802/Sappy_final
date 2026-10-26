@@ -71,7 +71,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
   return (
     <>
       {/* Bottom Sticky Mobile Navigation Bar */}
-      <nav aria-label="Mobile Navigation" className="md:hidden shrink-0 z-40 bg-white/95 dark:bg-[#1c1815]/95 backdrop-blur-md border-t border-[#e6dfd5] dark:border-[#362e26] px-2 py-1 flex items-center justify-around safe-area-bottom">
+      <nav aria-label="Mobile Navigation" className="md:hidden shrink-0 z-40 bg-white/95 dark:bg-[#1c1815]/95 backdrop-blur-md border-t border-[#e6dfd5] dark:border-[#362e26] px-2 py-1 flex items-center justify-around safe-area-bottom select-none">
         {filteredMainTabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = currentSection === tab.id;
@@ -79,7 +79,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
             <button
               key={tab.id}
               onClick={() => onSelectSection(tab.id)}
-              className={`relative flex flex-col items-center justify-center py-1 px-3 rounded-xl transition ${
+              className={`relative flex flex-col items-center justify-center min-h-[46px] min-w-[56px] py-1 px-2.5 rounded-xl transition active:scale-95 cursor-pointer touch-manipulation ${
                 isActive
                   ? 'text-[#064e3b] dark:text-[#6ee7b7] font-bold'
                   : 'text-stone-500 dark:text-stone-400 font-medium'
@@ -101,7 +101,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
         {/* More Drawer Button */}
         <button
           onClick={() => setDrawerOpen(true)}
-          className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl transition ${
+          className={`flex flex-col items-center justify-center min-h-[46px] min-w-[56px] py-1 px-2.5 rounded-xl transition active:scale-95 cursor-pointer touch-manipulation ${
             drawerOpen ? 'text-[#064e3b] dark:text-[#6ee7b7]' : 'text-stone-500 dark:text-stone-400'
           }`}
         >
@@ -113,7 +113,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
       {/* Slide-over Mobile Drawer */}
       {drawerOpen && (
         <div className="fixed inset-0 z-50 flex bg-black/60 backdrop-blur-xs md:hidden animate-in fade-in duration-150">
-          <div className="w-4/5 max-w-xs bg-white dark:bg-[#1c1815] h-full shadow-2xl flex flex-col p-4 animate-in slide-in-from-left duration-200">
+          <div className="w-4/5 max-w-xs bg-white dark:bg-[#1c1815] h-full shadow-2xl flex flex-col p-4 animate-in slide-in-from-left duration-200 safe-area-bottom">
             <div className="flex items-center justify-between pb-3 border-b border-[#e6dfd5] dark:border-[#362e26] mb-3">
               <div className="flex items-center gap-2">
                 <div className="w-7 h-7 rounded-lg bg-[#064e3b] text-[#6ee7b7] flex items-center justify-center font-bold text-sm">
@@ -128,13 +128,13 @@ export const MobileNav: React.FC<MobileNavProps> = ({
               </div>
               <button
                 onClick={() => setDrawerOpen(false)}
-                className="p-1 rounded-lg text-stone-400 hover:text-stone-900 dark:hover:text-stone-100"
+                className="p-1.5 rounded-lg text-stone-400 hover:text-stone-900 dark:hover:text-stone-100 cursor-pointer active:scale-95"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="space-y-1 overflow-y-auto flex-1">
+            <div className="space-y-1 overflow-y-auto touch-scroll overscroll-contain flex-1">
               {filteredDrawerItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = currentSection === item.id;
@@ -145,7 +145,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
                       onSelectSection(item.id);
                       setDrawerOpen(false);
                     }}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition ${
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition cursor-pointer active:scale-98 touch-manipulation ${
                       isActive
                         ? 'bg-[#064e3b] text-white'
                         : 'text-stone-700 dark:text-stone-300 hover:bg-[#f5f1e8] dark:hover:bg-[#25201b]'
@@ -162,7 +162,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
               <div>Active Cashier: {currentStaff.name}</div>
             </div>
           </div>
-          <div className="flex-1" onClick={() => setDrawerOpen(false)} />
+          <div className="flex-1 cursor-pointer" onClick={() => setDrawerOpen(false)} />
         </div>
       )}
     </>

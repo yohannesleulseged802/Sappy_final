@@ -564,7 +564,7 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
       )}
 
       {/* ================= LEFT SIDE: PRODUCT CATALOG & SEARCH ================= */}
-      <div className={`flex-1 min-h-0 flex-col h-full border-r border-[#e6dfd5] dark:border-[#362e26] overflow-hidden ${mobileTab === 'catalog' ? 'flex' : 'hidden lg:flex'}`}>
+      <div className={`flex-1 min-h-0 flex-col lg:h-full border-r border-[#e6dfd5] dark:border-[#362e26] overflow-hidden ${mobileTab === 'catalog' ? 'flex' : 'hidden lg:flex'}`}>
         {/* Top Control Bar: Search & Quick Actions */}
         <div className="p-3 bg-white dark:bg-[#1c1815] border-b border-[#e6dfd5] dark:border-[#362e26] flex items-center gap-2">
           {/* Fast Search Input */}
@@ -641,7 +641,7 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
         </div>
 
         {/* Products Grid */}
-        <div className="flex-1 overflow-y-auto p-3 grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2.5 content-start pb-24 lg:pb-3">
+        <div className="flex-1 min-h-0 overflow-y-auto touch-scroll overscroll-contain p-3 grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2.5 content-start pb-24 lg:pb-3">
           {filteredProducts.map((p) => {
             const isOutOfStock = p.currentStock <= 0 && p.category !== 'Print Services';
             const isLowStock = p.currentStock <= p.minStockThreshold && !isOutOfStock;
@@ -725,7 +725,7 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
       </div>
 
       {/* ================= RIGHT SIDE: HIGH-SPEED CART & CHECKOUT ================= */}
-      <div className={`w-full lg:w-96 xl:w-[420px] bg-white dark:bg-[#1c1815] flex-1 min-h-0 lg:flex-none flex flex-col h-full max-h-full border-t lg:border-t-0 shrink-0 overflow-hidden ${mobileTab === 'cart' ? 'flex' : 'hidden lg:flex'}`}>
+      <div className={`w-full lg:w-96 xl:w-[420px] bg-white dark:bg-[#1c1815] flex-1 min-h-0 lg:flex-none flex flex-col lg:h-full max-h-full border-t lg:border-t-0 lg:shrink-0 overflow-hidden ${mobileTab === 'cart' ? 'flex' : 'hidden lg:flex'}`}>
         {/* 1. Cart Header */}
         <div className="shrink-0 bg-[#fdfbf7] dark:bg-[#171412] border-b border-[#e6dfd5] dark:border-[#362e26]">
           <div className="p-3 flex items-center justify-between">
@@ -793,7 +793,7 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
         </div>
 
         {/* 2. Cart Items List */}
-        <div className="flex-1 min-h-0 max-h-full overflow-y-auto p-2.5 sm:p-3 space-y-2">
+        <div className="flex-1 min-h-0 max-h-full overflow-y-auto touch-scroll overscroll-contain p-2.5 sm:p-3 space-y-2">
           {cart.map((item) => {
             const hasDiscount = item.discountValue && item.discountValue > 0;
             const itemPrice = item.sellingPrice;
@@ -895,7 +895,7 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
         </div>
 
         {/* 3. Cart Totals & Actions Footer - Engineered to fit whole screen without scrolling */}
-        <div className="p-2.5 sm:p-3 bg-[#fdfbf7] dark:bg-[#171412] border-t border-[#e6dfd5] dark:border-[#362e26] shrink-0 space-y-2 mt-auto">
+        <div className="p-2.5 sm:p-3 bg-[#fdfbf7] dark:bg-[#171412] border-t border-[#e6dfd5] dark:border-[#362e26] shrink-0 space-y-2 mt-auto safe-area-bottom">
           {/* Subtotal & Discounts */}
           <div className="space-y-1 text-xs">
             <div className="flex justify-between items-center text-stone-500 dark:text-stone-400">

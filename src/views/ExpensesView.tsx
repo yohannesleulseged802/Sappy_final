@@ -123,7 +123,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
       </div>
 
       {/* Expenses Table */}
-      <div className="flex-1 overflow-y-auto p-3">
+      <div className="flex-1 min-h-0 overflow-y-auto touch-scroll overscroll-contain p-3 pb-24 md:pb-3">
         <div className="bg-white dark:bg-[#1c1815] border border-[#e6dfd5] dark:border-[#362e26] rounded-2xl shadow-xs overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse text-xs">

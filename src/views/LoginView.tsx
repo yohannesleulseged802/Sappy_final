@@ -469,35 +469,52 @@ export const LoginView: React.FC<LoginViewProps> = ({onLoginSuccess, isOnline}) 
   };
 
   return (
-    <div className="min-h-screen bg-[#fdfbf7] dark:bg-[#12100e] text-[#26201b] dark:text-[#f5f1e8] flex flex-col justify-between font-sans selection:bg-[#6ee7b7] selection:text-[#064e3b]">
+    <div className="h-full h-[100dvh] overflow-y-auto overscroll-contain touch-scroll bg-[#fdfbf7] dark:bg-[#12100e] text-[#26201b] dark:text-[#f5f1e8] flex flex-col justify-between font-sans selection:bg-[#6ee7b7] selection:text-[#064e3b] safe-area-bottom">
       {/* Main Container */}
-      <div className="flex-1 flex items-center justify-center p-4 sm:p-6 lg:p-8">
+      <div className="flex-1 flex items-center justify-center p-3 sm:p-6 lg:p-8">
         <div className="w-full max-w-5xl bg-white dark:bg-[#1c1815] border border-[#e6dfd5] dark:border-[#362e26] rounded-3xl shadow-2xl overflow-hidden grid grid-cols-1 lg:grid-cols-12 min-h-[580px]">
           
           {/* ================= LEFT SIDE: SAPPY STATIONARY BRANDING ================= */}
-          <div className="lg:col-span-5 bg-gradient-to-br from-[#064e3b] via-[#043b2c] to-[#02231a] text-white p-8 sm:p-10 flex flex-col justify-between relative overflow-hidden">
+          <div className="lg:col-span-5 bg-gradient-to-br from-[#064e3b] via-[#043b2c] to-[#02231a] text-white p-5 sm:p-6 lg:p-10 flex flex-col justify-between relative overflow-hidden">
             {/* Background Geometric Paper/Ink Motif */}
             <div className="absolute -top-16 -right-16 w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
             <div className="absolute -bottom-20 -left-20 w-80 h-80 bg-emerald-400/10 rounded-full blur-3xl pointer-events-none" />
 
             <div>
               {/* Brand Logo & Wordmark */}
-              <div className="flex items-center gap-3.5 mb-6">
-                <div className="w-14 h-14 rounded-2xl bg-[#fbf9f4] text-[#244834] flex items-center justify-center shadow-xl border border-white/20 p-1.5 shrink-0">
-                  <SappyBrandLogo size="lg" className="text-[#244834]" />
+              <div className="flex items-center justify-between lg:justify-start gap-3.5 mb-2 lg:mb-6">
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 lg:w-14 lg:h-14 rounded-2xl bg-[#fbf9f4] text-[#244834] flex items-center justify-center shadow-xl border border-white/20 p-1.5 shrink-0">
+                    <SappyBrandLogo size="lg" className="text-[#244834]" />
+                  </div>
+                  <div>
+                    <h1 className="text-xl sm:text-2xl lg:text-3xl font-extrabold tracking-widest leading-none font-sans">
+                      SAPPY
+                    </h1>
+                    <p className="text-xs sm:text-sm text-[#a7f3d0] font-serif italic tracking-wide mt-0.5 lg:mt-1">
+                      stationery &amp; printing.
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h1 className="text-2xl sm:text-3xl font-extrabold tracking-widest leading-none font-sans">
-                    SAPPY
-                  </h1>
-                  <p className="text-xs sm:text-sm text-[#a7f3d0] font-serif italic tracking-wide mt-1">
-                    stationery &amp; printing.
-                  </p>
+
+                {/* Mobile Online Badge in header */}
+                <div className="lg:hidden">
+                  {isOnline ? (
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-950/80 border border-emerald-700/60 text-[#6ee7b7] font-bold text-[10px]">
+                      <Wifi className="w-3 h-3 text-emerald-400" />
+                      <span>ONLINE</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-950/80 border border-amber-700/60 text-amber-300 font-bold text-[10px]">
+                      <WifiOff className="w-3 h-3 text-amber-400" />
+                      <span>OFFLINE</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
-              {/* Tagline & Store Identity */}
-              <div className="space-y-4 my-8">
+              {/* Tagline & Store Identity (Hidden on small mobile to give instant access to inputs, visible on lg) */}
+              <div className="hidden lg:block space-y-4 my-8">
                 <h2 className="text-xl sm:text-2xl font-bold leading-tight">
                   Point of Sale &amp; Inventory Terminal
                 </h2>
@@ -507,7 +524,7 @@ export const LoginView: React.FC<LoginViewProps> = ({onLoginSuccess, isOnline}) 
               </div>
 
               {/* Feature Trust Badges */}
-              <div className="space-y-3 pt-2">
+              <div className="hidden lg:block space-y-3 pt-2">
                 <div className="flex items-center gap-2.5 text-xs text-stone-200">
                   <ShieldCheck className="w-4 h-4 text-[#6ee7b7] shrink-0" />
                   <span>100% Offline-First Data Safeguard</span>
@@ -524,7 +541,7 @@ export const LoginView: React.FC<LoginViewProps> = ({onLoginSuccess, isOnline}) 
             </div>
 
             {/* Universal Android APK Download & Offline/Online Network Indicator Banner */}
-            <div className="mt-8 space-y-3">
+            <div className="mt-4 lg:mt-8 space-y-3 hidden lg:block">
               <a
                 href="/api/download/apk"
                 download="Sappy-Stationary-POS-Universal.apk"

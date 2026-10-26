@@ -122,7 +122,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   }, [sales, products, expenses, customers]);
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-[#fdfbf7] dark:bg-[#12100e] space-y-6">
+    <div className="flex-1 min-h-0 overflow-y-auto touch-scroll overscroll-contain p-4 sm:p-6 pb-24 md:pb-6 bg-[#fdfbf7] dark:bg-[#12100e] space-y-6">
       {/* Top Banner: Quick Operations & Records Status */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl bg-gradient-to-r from-[#064e3b] to-[#043b2c] text-white shadow-md">
         <div>
