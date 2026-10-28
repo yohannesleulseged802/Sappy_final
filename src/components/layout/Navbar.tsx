@@ -142,9 +142,19 @@ export const Navbar: React.FC<NavbarProps> = ({
 
       {/* Center/Right Status Indicators and Controls */}
       <div className="flex items-center gap-2 sm:gap-3">
-        {/* Offline / Online 10-Second Auto-Sync Status Pill */}
+        {/* Offline / Online / Quota 10-Second Auto-Sync Status Pill */}
         <div className="flex items-center">
-          {isSyncing ? (
+          {autoSyncState.isQuotaExceeded ? (
+            <button
+              onClick={triggerSync}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-900 dark:bg-amber-950/70 dark:text-amber-200 border border-amber-300 dark:border-amber-700 hover:bg-amber-100 transition cursor-pointer"
+              title="Daily Cloud Firestore write quota reached. POS is running seamlessly using Local Storage & Server synchronization (resets daily at 00:00 UTC). Click to sync with server."
+            >
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+              <span className="font-extrabold tracking-wide">LOCAL &amp; SERVER SYNC</span>
+              <span className="text-[10px] font-mono opacity-80 hidden lg:inline">• QUOTA ACTIVE</span>
+            </button>
+          ) : isSyncing ? (
             <button
               onClick={triggerSync}
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 animate-pulse border border-emerald-300 dark:border-emerald-700"

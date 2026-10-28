@@ -639,10 +639,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
           <div className="p-3 rounded-xl bg-stone-50 dark:bg-stone-900/60 border border-stone-200 dark:border-stone-800">
             <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">Cloud Firestore</span>
-            <div className="text-xs font-bold text-emerald-700 dark:text-emerald-400 mt-0.5 flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-              <span>Connected</span>
-            </div>
+            {autoSyncState.isQuotaExceeded ? (
+              <div className="text-xs font-bold text-amber-700 dark:text-amber-400 mt-0.5 flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                <span>Free Quota Reached</span>
+              </div>
+            ) : (
+              <div className="text-xs font-bold text-emerald-700 dark:text-emerald-400 mt-0.5 flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                <span>Connected</span>
+              </div>
+            )}
           </div>
           <div className="p-3 rounded-xl bg-stone-50 dark:bg-stone-900/60 border border-stone-200 dark:border-stone-800">
             <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">Offline Queue</span>
@@ -651,6 +658,37 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           </div>
         </div>
+
+        {autoSyncState.isQuotaExceeded && (
+          <div className="p-3 bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-700 rounded-xl text-xs space-y-1.5 text-amber-900 dark:text-amber-200">
+            <div className="flex items-center gap-2 font-bold">
+              <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+              <span>Daily Firestore Free Write Limit Reached (20,000 writes/day)</span>
+            </div>
+            <p className="text-[11px] text-amber-800 dark:text-amber-300 leading-relaxed">
+              Your POS is operating seamlessly in local-first mode with central server synchronization. All sales, customers, stock movements, and receipts are recorded without interruption. The Firestore write quota will automatically reset the next day (at 00:00 UTC).
+            </p>
+            <div className="flex items-center gap-3 pt-1 text-[11px] font-semibold">
+              <a
+                href="https://console.firebase.google.com/project/maximal-waters-zn2tx/firestore/databases/ai-studio-sappystationaryp-e958fc0b-3813-488d-b694-896f4a7b71a0/data?openUpgradeDialog=true"
+                target="_blank"
+                rel="noreferrer"
+                className="underline hover:text-amber-950 dark:hover:text-amber-100 font-bold"
+              >
+                Open Firebase Console &amp; Upgrade Quota →
+              </a>
+              <span>•</span>
+              <a
+                href="https://firebase.google.com/pricing#cloud-firestore"
+                target="_blank"
+                rel="noreferrer"
+                className="underline opacity-80 hover:opacity-100"
+              >
+                Spark Plan Details
+              </a>
+            </div>
+          </div>
+        )}
 
         {syncFeedback && (
           <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/80 border border-emerald-300 dark:border-emerald-800 rounded-xl text-xs font-semibold text-emerald-800 dark:text-emerald-200 flex items-center gap-2 animate-in fade-in">
@@ -779,8 +817,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
               <button
                 type="button"
-                onClick={() => {
-                  storage.wipeAllData({ resetSettings: resetProfileOnWipe });
+                onClick={async () => {
+                  await storage.wipeAllData({ resetSettings: resetProfileOnWipe });
                   sound.playCheckoutSuccess();
                   setShowResetModal(false);
                   onRefreshData();

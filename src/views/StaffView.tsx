@@ -204,8 +204,8 @@ export const StaffView: React.FC<StaffViewProps> = ({
         return;
       }
 
-      // Reset all users
-      storage.resetAllUsers();
+      // Reset all users across devices
+      await storage.resetAllUsers();
       setIsExecutingReset(false);
       setShowResetAllModal(false);
       sound.playCheckoutSuccess();

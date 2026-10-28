@@ -153,6 +153,8 @@ export const LoginView: React.FC<LoginViewProps> = ({onLoginSuccess, isOnline}) 
         setUsername((prev) => prev || activeStaff[0].email || activeStaff[0].username || '');
       } else {
         setSelectedStaffId('');
+        setUsername('');
+        setActiveAuthTab('signup');
       }
     });
 
@@ -164,6 +166,10 @@ export const LoginView: React.FC<LoginViewProps> = ({onLoginSuccess, isOnline}) 
         setStaffList(activeStaff);
         setSelectedStaffId((prev) => (prev && activeStaff.some((s) => s.id === prev) ? prev : activeStaff[0].id));
         setUsername((prev) => prev || activeStaff[0].email || activeStaff[0].username || '');
+      } else {
+        setSelectedStaffId('');
+        setUsername('');
+        setActiveAuthTab('signup');
       }
     });
 
@@ -175,14 +181,30 @@ export const LoginView: React.FC<LoginViewProps> = ({onLoginSuccess, isOnline}) 
         if (res.staffList.length > 0) {
           const activeStaff = res.staffList.filter((s) => s.active && s.approvalStatus !== 'pending');
           setStaffList(activeStaff);
+        } else {
+          setStaffList([]);
+          setSelectedStaffId('');
+          setUsername('');
+          setActiveAuthTab('signup');
         }
       });
     });
+
+    // 4. Cross-device wipe listener
+    const handleWipe = () => {
+      if (!isMounted) return;
+      setStaffList([]);
+      setSelectedStaffId('');
+      setUsername('');
+      setActiveAuthTab('signup');
+    };
+    window.addEventListener('sappy-cross-device-wipe', handleWipe);
 
     return () => {
       isMounted = false;
       unsubscribeAutoSync();
       unsubscribeFirestore();
+      window.removeEventListener('sappy-cross-device-wipe', handleWipe);
     };
   }, []);
 

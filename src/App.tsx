@@ -243,9 +243,35 @@ export default function App() {
       refreshAllData();
     });
 
+    // 9. Real-time Firestore listener for cross-device factory reset & data wipes
+    const unsubscribeSystemMeta = storage.syncSystemMetaWithFirestore((wipeType) => {
+      if (!isMounted) return;
+      if (wipeType === 'full' || wipeType === 'staff_only') {
+        storage.signOut();
+        setIsAuthenticated(false);
+        setIsLocked(false);
+        refreshAllData();
+      } else {
+        refreshAllData();
+      }
+    });
+
     const handleAutoSynced = () => {
       if (!isMounted) return;
       refreshAllData();
+    };
+
+    const handleCrossDeviceWipe = (e: any) => {
+      if (!isMounted) return;
+      const wipeType = e?.detail?.wipeType;
+      if (wipeType === 'full' || wipeType === 'staff_only') {
+        storage.signOut();
+        setIsAuthenticated(false);
+        setIsLocked(false);
+        refreshAllData();
+      } else {
+        refreshAllData();
+      }
     };
 
     const handleFocus = async () => {
@@ -256,11 +282,13 @@ export default function App() {
     };
 
     window.addEventListener('sappy-auto-synced', handleAutoSynced);
+    window.addEventListener('sappy-cross-device-wipe', handleCrossDeviceWipe);
     window.addEventListener('focus', handleFocus);
 
     return () => {
       isMounted = false;
       unsubscribeAutoSync();
+      unsubscribeSystemMeta();
       unsubscribeStaff();
       unsubscribeProducts();
       unsubscribeSales();
@@ -269,6 +297,7 @@ export default function App() {
       unsubscribeExpenses();
       unsubscribeSettings();
       window.removeEventListener('sappy-auto-synced', handleAutoSynced);
+      window.removeEventListener('sappy-cross-device-wipe', handleCrossDeviceWipe);
       window.removeEventListener('focus', handleFocus);
     };
   }, [isOnline, refreshAllData]);

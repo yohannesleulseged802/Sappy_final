@@ -88,6 +88,8 @@ interface SystemMeta {
   initialAdminUid?: string;
   initializedAt?: string;
   lastWipeTimestamp?: number;
+  lastCatalogWipeTimestamp?: number;
+  wipeType?: string;
 }
 
 const SERVER_STORE_DIR = path.join(__dirname, '.server_data');
@@ -1284,11 +1286,13 @@ app.post('/api/system/wipe-everything', (req: Request, res: Response) => {
     success: true,
     isInitialized: false,
     lastWipeTimestamp: now,
+    wipeType: 'full',
     message: 'System factory reset successful. All users, products, sales, customers, and data have been wiped clean across all devices.',
   });
 });
 
 app.post('/api/reset-all-data', (req: Request, res: Response) => {
+  const now = Date.now();
   if (req.body?.resetSettings) {
     saveStoredSettings(DEFAULT_SETTINGS);
   }
@@ -1297,7 +1301,14 @@ app.post('/api/reset-all-data', (req: Request, res: Response) => {
   saveStoredCustomers([]);
   saveStoredExpenses([]);
   saveStoredCreditTxs([]);
-  res.json({ success: true, message: 'All store catalog and sales data wiped.' });
+  const meta = loadSystemMeta();
+  saveSystemMeta({ ...meta, lastWipeTimestamp: now, lastCatalogWipeTimestamp: now });
+  res.json({
+    success: true,
+    lastWipeTimestamp: now,
+    wipeType: 'catalog_only',
+    message: 'All store catalog and sales data wiped across all devices.',
+  });
 });
 
 app.get(['/api/download/apk', '/sappy-stationary-pos.apk'], (_req: Request, res: Response) => {

@@ -79,8 +79,42 @@ const INITIAL_CUSTOMERS: Customer[] = [];
 const INITIAL_PRODUCTS: Product[] = [];
 
 class StorageService {
+  private isFirestoreQuotaExceeded: boolean = false;
+  private quotaExceededMessage: string | null = null;
+
   private isBrowser(): boolean {
     return typeof window !== 'undefined' && typeof localStorage !== 'undefined';
+  }
+
+  public handleFirestoreQuotaError(err: any): boolean {
+    const errMsg = err?.message || String(err || '');
+    const errCode = err?.code || '';
+    if (
+      errCode === 'resource-exhausted' ||
+      errMsg.includes('resource-exhausted') ||
+      errMsg.includes('Quota limit exceeded') ||
+      errMsg.includes('Quota exceeded')
+    ) {
+      if (!this.isFirestoreQuotaExceeded) {
+        this.isFirestoreQuotaExceeded = true;
+        this.quotaExceededMessage =
+          'Daily Firestore write limit reached. POS continues operating seamlessly via Local Storage & Express backend synchronization until reset.';
+        console.warn(
+          '⚠️ [StorageService] Cloud Firestore write quota reached. System is safely operating in Local-First & Express Backend sync mode. Firestore writes paused until daily quota resets at 00:00 UTC.'
+        );
+        this.notifyAutoSyncListeners();
+      }
+      return true;
+    }
+    return false;
+  }
+
+  public isQuotaExceeded(): boolean {
+    return this.isFirestoreQuotaExceeded;
+  }
+
+  public getQuotaMessage(): string | null {
+    return this.quotaExceededMessage;
   }
 
   // --- Initialize Storage with Defaults if Empty ---
@@ -187,9 +221,11 @@ class StorageService {
   }
 
   async pushSettingsToFirestore(settings: StoreSettings): Promise<void> {
+    if (this.isFirestoreQuotaExceeded) return;
     try {
       await setDoc(doc(db, 'settings', 'store'), settings, { merge: true });
     } catch (err) {
+      if (this.handleFirestoreQuotaError(err)) return;
       console.warn('Firestore pushSettings notice:', err);
     }
   }
@@ -288,6 +324,7 @@ class StorageService {
   }
 
   async pushStaffToFirestore(staff: Staff): Promise<void> {
+    if (this.isFirestoreQuotaExceeded) return;
     try {
       const userRef = doc(db, 'users', staff.id);
       await setDoc(
@@ -325,14 +362,17 @@ class StorageService {
         { merge: true }
       );
     } catch (err) {
+      if (this.handleFirestoreQuotaError(err)) return;
       console.warn('Firestore pushStaff notice (offline/retry):', err);
     }
   }
 
   async deleteStaffFromFirestore(staffId: string): Promise<void> {
+    if (this.isFirestoreQuotaExceeded) return;
     try {
       await deleteDoc(doc(db, 'users', staffId));
     } catch (err) {
+      if (this.handleFirestoreQuotaError(err)) return;
       console.warn('Firestore deleteStaff notice:', err);
     }
   }
@@ -385,10 +425,11 @@ class StorageService {
         if (remoteStaff.length > 0) {
           this.mergeRemoteStaff(remoteStaff, onUpdate);
         } else {
-          // If Firestore is empty but this device has local staff accounts, seed Firestore
-          const local = this.getStaffList();
-          if (local.length > 0) {
-            local.forEach((s) => this.pushStaffToFirestore(s));
+          // If Firestore is empty, respect the reset state and clear local staff
+          const wipeTs = Number(localStorage.getItem('sappy_last_known_wipe_ts') || 0);
+          if (wipeTs > 0) {
+            this.saveStaffList([]);
+            if (onUpdate) onUpdate([]);
           }
         }
       })
@@ -408,10 +449,9 @@ class StorageService {
         if (remoteStaff.length > 0) {
           this.mergeRemoteStaff(remoteStaff, onUpdate);
         } else {
-          const local = this.getStaffList();
-          if (local.length > 0 && snap.metadata.hasPendingWrites === false) {
-            local.forEach((s) => this.pushStaffToFirestore(s));
-          }
+          // If Firestore was wiped or emptied remotely, clear local staff across all devices
+          this.saveStaffList([]);
+          if (onUpdate) onUpdate([]);
         }
       },
       (err) => {
@@ -564,10 +604,8 @@ class StorageService {
     return true;
   }
 
-  resetAllUsers(): void {
+  resetAllUsersLocally(): void {
     if (!this.isBrowser()) return;
-    const now = Date.now();
-    localStorage.setItem('sappy_last_known_wipe_ts', String(now));
     localStorage.setItem(STORAGE_KEYS.STAFF, JSON.stringify([]));
     localStorage.removeItem(STORAGE_KEYS.CURRENT_STAFF_ID);
     localStorage.removeItem(STORAGE_KEYS.SESSION_AUTHENTICATED);
@@ -576,23 +614,43 @@ class StorageService {
     localStorage.removeItem(STORAGE_KEYS.LOCKOUT_UNTIL);
     localStorage.removeItem(STORAGE_KEYS.STORE_INITIALIZED);
     localStorage.removeItem('sappy_initial_signup_completed');
+  }
+
+  async resetAllUsers(): Promise<void> {
+    if (!this.isBrowser()) return;
+    const now = Date.now();
+    localStorage.setItem('sappy_last_known_wipe_ts', String(now));
+
+    // 1. Wipe Cloud Firestore users collection across all devices
+    await this.clearUsersFirestoreData(now);
+
+    // 2. Wipe Backend Server users
     try {
-      fetch('/api/auth/reset-all-users', { method: 'POST' })
-        .then((r) => r.json())
-        .then((d) => {
-          if (d?.lastWipeTimestamp) {
-            localStorage.setItem('sappy_last_known_wipe_ts', String(d.lastWipeTimestamp));
-          }
-        })
-        .catch(() => {});
+      const res = await fetch('/api/auth/reset-all-users', { method: 'POST' });
+      const d = await res.json().catch(() => ({}));
+      if (d?.lastWipeTimestamp) {
+        localStorage.setItem('sappy_last_known_wipe_ts', String(d.lastWipeTimestamp));
+      }
     } catch {
-      // ignore
+      // offline fallback
     }
+
+    // 3. Wipe local staff
+    this.resetAllUsersLocally();
+
     this.addAuditLog(
       'SECURITY_RESET',
       'AUTH',
       'All staff accounts, authentication credentials, and active sessions cleared per security policy.'
     );
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('sappy-cross-device-wipe', {
+          detail: { wipeType: 'staff_only', timestamp: now },
+        })
+      );
+    }
   }
 
   getCurrentStaff(): Staff {
@@ -1219,40 +1277,48 @@ class StorageService {
       const serverWipeTs = Number(data.lastWipeTimestamp || 0);
       const localKnownWipeTs = Number(localStorage.getItem('sappy_last_known_wipe_ts') || 0);
 
-      // Only trigger a local wipe if an explicit factory/user reset timestamp from the server is newer than local state
-      if (serverWipeTs > 0 && serverWipeTs > localKnownWipeTs && !serverHasUsers) {
+      // Check if an authoritative wipe happened on another device
+      if (serverWipeTs > 0 && serverWipeTs > localKnownWipeTs) {
         localStorage.setItem('sappy_last_known_wipe_ts', String(serverWipeTs));
-        const newestLocalUserMs = localStaff.reduce((max, u) => {
-          const t = u.createdAt ? new Date(u.createdAt).getTime() : 0;
-          return t > max ? t : max;
-        }, 0);
-
-        if (newestLocalUserMs < serverWipeTs && localStaff.length > 0) {
+        if (!serverHasUsers) {
           this.factoryResetEverythingLocally();
-          localStorage.setItem('sappy_last_known_wipe_ts', String(serverWipeTs));
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('sappy-cross-device-wipe', {
+                detail: { wipeType: 'full', timestamp: serverWipeTs },
+              })
+            );
+          }
           return { isInitialized: false, wiped: true, productsCount: 0, salesCount: 0 };
+        } else {
+          this.wipeCatalogLocally();
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('sappy-cross-device-wipe', {
+                detail: { wipeType: 'catalog_only', timestamp: serverWipeTs },
+              })
+            );
+          }
         }
       }
 
-      // Sync Products (avoid overwriting local products with empty array if server restarted)
-      if (Array.isArray(data.products) && data.products.length > 0) {
+      // Sync Products (respect server data)
+      if (Array.isArray(data.products)) {
         localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(data.products));
-      } else if (this.getProducts().length > 0) {
-        this.saveProducts(this.getProducts());
       }
 
       // Sync Sales
-      if (Array.isArray(data.sales) && data.sales.length > 0) {
+      if (Array.isArray(data.sales)) {
         localStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify(data.sales));
       }
 
       // Sync Customers
-      if (Array.isArray(data.customers) && data.customers.length > 0) {
+      if (Array.isArray(data.customers)) {
         localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(data.customers));
       }
 
       // Sync Expenses
-      if (Array.isArray(data.expenses) && data.expenses.length > 0) {
+      if (Array.isArray(data.expenses)) {
         localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(data.expenses));
       }
 
@@ -1261,17 +1327,18 @@ class StorageService {
         localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(data.settings));
       }
 
-      // Sync Staff (preserve passwords and never wipe local staff if server restarted)
+      // Sync Staff
       if (serverHasUsers) {
         const merged = this.mergeServerUsersWithLocal(data.users);
         this.saveStaffList(merged);
         if (merged.length > 0) {
           this.setStoreInitialized(true);
         }
-      } else if (localStaff.length > 0) {
-        // Push local staff up to server so server has our accounts
+      } else if (serverWipeTs === 0 && localStaff.length > 0) {
         this.pushStaffToServer(localStaff);
         this.setStoreInitialized(true);
+      } else {
+        this.saveStaffList([]);
       }
 
       return {
@@ -1378,6 +1445,7 @@ class StorageService {
   }
 
   async pushProductToFirestore(product: Product): Promise<void> {
+    if (this.isFirestoreQuotaExceeded) return;
     try {
       const prodRef = doc(db, 'products', product.id);
       await setDoc(
@@ -1404,12 +1472,13 @@ class StorageService {
         { merge: true }
       );
     } catch (err) {
+      if (this.handleFirestoreQuotaError(err)) return;
       console.warn('Firestore pushProduct notice:', err);
     }
   }
 
   async pushProductsBatchToFirestore(products: Product[]): Promise<void> {
-    if (!products || products.length === 0) return;
+    if (this.isFirestoreQuotaExceeded || !products || products.length === 0) return;
     try {
       const CHUNK_SIZE = 400;
       for (let i = 0; i < products.length; i += CHUNK_SIZE) {
@@ -1444,14 +1513,17 @@ class StorageService {
         await batch.commit();
       }
     } catch (err) {
+      if (this.handleFirestoreQuotaError(err)) return;
       console.warn('Firestore pushProductsBatch notice:', err);
     }
   }
 
   async deleteProductFromFirestore(productId: string): Promise<void> {
+    if (this.isFirestoreQuotaExceeded) return;
     try {
       await deleteDoc(doc(db, 'products', productId));
     } catch (err) {
+      if (this.handleFirestoreQuotaError(err)) return;
       console.warn('Firestore deleteProduct notice:', err);
     }
   }
@@ -1509,10 +1581,11 @@ class StorageService {
         if (remoteProds.length > 0) {
           this.mergeRemoteProducts(remoteProds, onUpdate);
         } else {
-          // If Firestore is empty but this device has local products, push all local products to Firestore!
-          const local = this.getProducts();
-          if (local.length > 0) {
-            this.pushProductsBatchToFirestore(local);
+          // If Firestore is empty, respect the reset state and clear local products
+          const wipeTs = Number(localStorage.getItem('sappy_last_known_wipe_ts') || 0);
+          if (wipeTs > 0) {
+            localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify([]));
+            if (onUpdate) onUpdate([]);
           }
         }
       })
@@ -1532,10 +1605,9 @@ class StorageService {
         if (remoteProds.length > 0) {
           this.mergeRemoteProducts(remoteProds, onUpdate);
         } else {
-          const local = this.getProducts();
-          if (local.length > 0 && snap.metadata.hasPendingWrites === false) {
-            this.pushProductsBatchToFirestore(local);
-          }
+          // If Firestore was wiped or emptied remotely, clear local products across all devices
+          localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify([]));
+          if (onUpdate) onUpdate([]);
         }
       },
       (err) => {
@@ -1979,9 +2051,11 @@ class StorageService {
   }
 
   async pushSaleToFirestore(sale: Sale): Promise<void> {
+    if (this.isFirestoreQuotaExceeded) return;
     try {
       await setDoc(doc(db, 'sales', sale.id), sale, { merge: true });
     } catch (err) {
+      if (this.handleFirestoreQuotaError(err)) return;
       console.warn('Firestore pushSale notice:', err);
     }
   }
@@ -1998,9 +2072,10 @@ class StorageService {
           this.saveSales(remoteSales);
           if (onUpdate) onUpdate(remoteSales);
         } else {
-          const local = this.getSales();
-          if (local.length > 0) {
-            local.forEach((s) => this.pushSaleToFirestore(s));
+          const wipeTs = Number(localStorage.getItem('sappy_last_known_wipe_ts') || 0);
+          if (wipeTs > 0) {
+            localStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify([]));
+            if (onUpdate) onUpdate([]);
           }
         }
       })
@@ -2015,6 +2090,9 @@ class StorageService {
           remoteSales.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
           this.saveSales(remoteSales);
           if (onUpdate) onUpdate(remoteSales);
+        } else {
+          localStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify([]));
+          if (onUpdate) onUpdate([]);
         }
       },
       (err) => console.warn('Firestore real-time sales sync notice:', err)
@@ -2180,15 +2258,17 @@ class StorageService {
   }
 
   async pushCustomerToFirestore(customer: Customer): Promise<void> {
+    if (this.isFirestoreQuotaExceeded) return;
     try {
       await setDoc(doc(db, 'customers', customer.id), customer, { merge: true });
     } catch (err) {
+      if (this.handleFirestoreQuotaError(err)) return;
       console.warn('Firestore pushCustomer notice:', err);
     }
   }
 
   async pushCustomersBatchToFirestore(customers: Customer[]): Promise<void> {
-    if (!customers || customers.length === 0) return;
+    if (this.isFirestoreQuotaExceeded || !customers || customers.length === 0) return;
     try {
       const batch = writeBatch(db);
       for (const c of customers) {
@@ -2196,6 +2276,7 @@ class StorageService {
       }
       await batch.commit();
     } catch (err) {
+      if (this.handleFirestoreQuotaError(err)) return;
       console.warn('Firestore pushCustomersBatch notice:', err);
     }
   }
@@ -2211,9 +2292,10 @@ class StorageService {
           localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(remoteCustomers));
           if (onUpdate) onUpdate(remoteCustomers);
         } else {
-          const local = this.getCustomers();
-          if (local.length > 0) {
-            this.pushCustomersBatchToFirestore(local);
+          const wipeTs = Number(localStorage.getItem('sappy_last_known_wipe_ts') || 0);
+          if (wipeTs > 0) {
+            localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify([]));
+            if (onUpdate) onUpdate([]);
           }
         }
       })
@@ -2227,6 +2309,9 @@ class StorageService {
         if (remoteCustomers.length > 0) {
           localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(remoteCustomers));
           if (onUpdate) onUpdate(remoteCustomers);
+        } else {
+          localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify([]));
+          if (onUpdate) onUpdate([]);
         }
       },
       (err) => console.warn('Firestore real-time customers sync notice:', err)
@@ -2266,9 +2351,11 @@ class StorageService {
   }
 
   async pushCreditTransactionToFirestore(tx: CreditTransaction): Promise<void> {
+    if (this.isFirestoreQuotaExceeded) return;
     try {
       await setDoc(doc(db, 'credit_transactions', tx.id), tx, { merge: true });
     } catch (err) {
+      if (this.handleFirestoreQuotaError(err)) return;
       console.warn('Firestore pushCreditTransaction notice:', err);
     }
   }
@@ -2285,9 +2372,10 @@ class StorageService {
           localStorage.setItem(STORAGE_KEYS.CREDIT_TXS, JSON.stringify(remoteTxs));
           if (onUpdate) onUpdate(remoteTxs);
         } else {
-          const local = this.getCreditTransactions();
-          if (local.length > 0) {
-            local.forEach((tx) => this.pushCreditTransactionToFirestore(tx));
+          const wipeTs = Number(localStorage.getItem('sappy_last_known_wipe_ts') || 0);
+          if (wipeTs > 0) {
+            localStorage.setItem(STORAGE_KEYS.CREDIT_TXS, JSON.stringify([]));
+            if (onUpdate) onUpdate([]);
           }
         }
       })
@@ -2302,6 +2390,9 @@ class StorageService {
           remoteTxs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
           localStorage.setItem(STORAGE_KEYS.CREDIT_TXS, JSON.stringify(remoteTxs));
           if (onUpdate) onUpdate(remoteTxs);
+        } else {
+          localStorage.setItem(STORAGE_KEYS.CREDIT_TXS, JSON.stringify([]));
+          if (onUpdate) onUpdate([]);
         }
       },
       (err) => console.warn('Firestore real-time credit tx sync notice:', err)
@@ -2426,9 +2517,11 @@ class StorageService {
 
   // --- Expenses Tracker ---
   async pushExpenseToFirestore(expense: StoreExpense): Promise<void> {
+    if (this.isFirestoreQuotaExceeded) return;
     try {
       await setDoc(doc(db, 'expenses', expense.id), expense, { merge: true });
     } catch (err) {
+      if (this.handleFirestoreQuotaError(err)) return;
       console.warn('Firestore pushExpense notice:', err);
     }
   }
@@ -2445,9 +2538,10 @@ class StorageService {
           localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(remoteExpenses));
           if (onUpdate) onUpdate(remoteExpenses);
         } else {
-          const local = this.getExpenses();
-          if (local.length > 0) {
-            local.forEach((e) => this.pushExpenseToFirestore(e));
+          const wipeTs = Number(localStorage.getItem('sappy_last_known_wipe_ts') || 0);
+          if (wipeTs > 0) {
+            localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify([]));
+            if (onUpdate) onUpdate([]);
           }
         }
       })
@@ -2462,6 +2556,9 @@ class StorageService {
           remoteExpenses.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
           localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(remoteExpenses));
           if (onUpdate) onUpdate(remoteExpenses);
+        } else {
+          localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify([]));
+          if (onUpdate) onUpdate([]);
         }
       },
       (err) => console.warn('Firestore real-time expenses sync notice:', err)
@@ -2629,6 +2726,11 @@ class StorageService {
     const queue = this.getSyncQueue();
     if (queue.length === 0) return 0;
 
+    // When quota is exceeded, postpone cloud syncing queue items so they are preserved
+    if (this.isFirestoreQuotaExceeded) {
+      return 0;
+    }
+
     const remainingQueue: SyncQueueItem[] = [];
     let processedCount = 0;
 
@@ -2647,6 +2749,10 @@ class StorageService {
         }
         processedCount++;
       } catch (err) {
+        if (this.handleFirestoreQuotaError(err)) {
+          remainingQueue.push(item);
+          break;
+        }
         console.warn('Sync queue item process error:', item.id, err);
         item.retries = (item.retries || 0) + 1;
         if (item.retries < 5) {
@@ -2670,12 +2776,16 @@ class StorageService {
     status: 'idle',
     pendingQueueCount: 0,
     lastError: null,
+    isQuotaExceeded: false,
+    quotaMessage: null,
   };
 
   getAutoSyncState(): AutoSyncState {
     const lastSyncedAt = this.isBrowser() ? localStorage.getItem('sappy_last_synced_at') : null;
     return {
       ...this.currentAutoSyncState,
+      isQuotaExceeded: this.isFirestoreQuotaExceeded,
+      quotaMessage: this.quotaExceededMessage,
       lastSyncedAt: this.currentAutoSyncState.lastSyncedAt || lastSyncedAt,
       pendingQueueCount: this.getSyncQueue().length,
     };
@@ -2711,6 +2821,8 @@ class StorageService {
         ...this.currentAutoSyncState,
         status: 'offline',
         pendingQueueCount: this.getSyncQueue().length,
+        isQuotaExceeded: this.isFirestoreQuotaExceeded,
+        quotaMessage: this.quotaExceededMessage,
       };
       this.notifyAutoSyncListeners();
       return this.getAutoSyncState();
@@ -2721,17 +2833,16 @@ class StorageService {
       ...this.currentAutoSyncState,
       status: 'syncing',
       lastError: null,
+      isQuotaExceeded: this.isFirestoreQuotaExceeded,
+      quotaMessage: this.quotaExceededMessage,
     };
     this.notifyAutoSyncListeners();
 
     try {
-      // 1. Process any queued mutations from offline sessions
+      // 1. Process any queued mutations from offline sessions (if quota not exceeded)
       await this.processSyncQueue();
 
-      // 2. Push/merge full snapshot with Cloud Firestore
-      await this.syncEverythingWithFirestore();
-
-      // 3. Synchronize with central server backend
+      // 2. Synchronize with central server backend (fast, local-first SQLite / JSON backend without quota limits)
       await this.syncAllDataWithBackend();
 
       const nowIso = new Date().toISOString();
@@ -2751,6 +2862,8 @@ class StorageService {
         status: 'synced',
         pendingQueueCount: this.getSyncQueue().length,
         lastError: null,
+        isQuotaExceeded: this.isFirestoreQuotaExceeded,
+        quotaMessage: this.quotaExceededMessage,
         stats: {
           productsCount: products.length,
           salesCount: sales.length,
@@ -2765,12 +2878,16 @@ class StorageService {
         );
       }
     } catch (err: any) {
-      console.warn('Auto-sync execution error:', err);
+      if (!this.handleFirestoreQuotaError(err)) {
+        console.warn('Auto-sync execution error:', err);
+      }
       this.currentAutoSyncState = {
         ...this.currentAutoSyncState,
         status: 'error',
         lastError: err?.message || 'Sync failed',
         pendingQueueCount: this.getSyncQueue().length,
+        isQuotaExceeded: this.isFirestoreQuotaExceeded,
+        quotaMessage: this.quotaExceededMessage,
       };
     } finally {
       this.isSyncInProgress = false;
@@ -2821,8 +2938,182 @@ class StorageService {
     this.notifyAutoSyncListeners();
   }
 
-  // Completely wipe all store data and start 100% fresh (No demo data)
-  wipeAllData(options?: { resetSettings?: boolean }) {
+  // --- Cross-Device Firestore Wipe & Reset Synchronization ---
+  async clearFirestoreCollection(collectionName: string): Promise<void> {
+    if (this.isFirestoreQuotaExceeded) return;
+    try {
+      const colRef = collection(db, collectionName);
+      const snap = await getDocs(colRef);
+      if (snap.empty) return;
+      const docs = snap.docs;
+      const CHUNK_SIZE = 400;
+      for (let i = 0; i < docs.length; i += CHUNK_SIZE) {
+        const chunk = docs.slice(i, i + CHUNK_SIZE);
+        const batch = writeBatch(db);
+        chunk.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+      }
+    } catch (err) {
+      if (this.handleFirestoreQuotaError(err)) return;
+      console.warn(`Error clearing Firestore collection ${collectionName}:`, err);
+    }
+  }
+
+  async clearAllFirestoreData(wipeTimestamp: number = Date.now()): Promise<void> {
+    if (this.isFirestoreQuotaExceeded) return;
+    try {
+      await Promise.all([
+        this.clearFirestoreCollection('users'),
+        this.clearFirestoreCollection('products'),
+        this.clearFirestoreCollection('sales'),
+        this.clearFirestoreCollection('customers'),
+        this.clearFirestoreCollection('credit_transactions'),
+        this.clearFirestoreCollection('expenses'),
+        this.clearFirestoreCollection('audit_logs'),
+      ]);
+
+      // Reset settings to defaults in Firestore
+      await setDoc(doc(db, 'settings', 'store'), DEFAULT_SETTINGS, { merge: false });
+
+      // Write authoritative wipe signal to system/meta in Firestore
+      await setDoc(
+        doc(db, 'system', 'meta'),
+        {
+          lastWipeTimestamp: wipeTimestamp,
+          isWiped: true,
+          isInitialized: false,
+          wipeType: 'full',
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: false }
+      );
+    } catch (err) {
+      if (this.handleFirestoreQuotaError(err)) return;
+      console.warn('Error during full Firestore data wipe:', err);
+    }
+  }
+
+  async clearCatalogFirestoreData(options?: { resetSettings?: boolean }, wipeTimestamp: number = Date.now()): Promise<void> {
+    if (this.isFirestoreQuotaExceeded) return;
+    try {
+      await Promise.all([
+        this.clearFirestoreCollection('products'),
+        this.clearFirestoreCollection('sales'),
+        this.clearFirestoreCollection('customers'),
+        this.clearFirestoreCollection('credit_transactions'),
+        this.clearFirestoreCollection('expenses'),
+      ]);
+
+      if (options?.resetSettings) {
+        await setDoc(doc(db, 'settings', 'store'), DEFAULT_SETTINGS, { merge: false });
+      }
+
+      await setDoc(
+        doc(db, 'system', 'meta'),
+        {
+          lastWipeTimestamp: wipeTimestamp,
+          lastCatalogWipeTimestamp: wipeTimestamp,
+          isWiped: true,
+          isInitialized: true,
+          wipeType: 'catalog_only',
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+    } catch (err) {
+      if (this.handleFirestoreQuotaError(err)) return;
+      console.warn('Error during catalog Firestore wipe:', err);
+    }
+  }
+
+  async clearUsersFirestoreData(wipeTimestamp: number = Date.now()): Promise<void> {
+    if (this.isFirestoreQuotaExceeded) return;
+    try {
+      await this.clearFirestoreCollection('users');
+      await setDoc(
+        doc(db, 'system', 'meta'),
+        {
+          lastWipeTimestamp: wipeTimestamp,
+          isWiped: true,
+          isInitialized: false,
+          wipeType: 'staff_only',
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+    } catch (err) {
+      if (this.handleFirestoreQuotaError(err)) return;
+      console.warn('Error during users Firestore wipe:', err);
+    }
+  }
+
+  syncSystemMetaWithFirestore(onWipeDetected?: (wipeType: string, ts: number) => void): () => void {
+    if (!this.isBrowser()) return () => {};
+
+    getDoc(doc(db, 'system', 'meta'))
+      .then((snap) => {
+        if (!snap.exists()) return;
+        const data = snap.data();
+        const remoteWipeTs = Number(data?.lastWipeTimestamp || 0);
+        const localKnownWipeTs = Number(localStorage.getItem('sappy_last_known_wipe_ts') || 0);
+
+        if (remoteWipeTs > 0 && remoteWipeTs > localKnownWipeTs) {
+          localStorage.setItem('sappy_last_known_wipe_ts', String(remoteWipeTs));
+          const wipeType = data?.wipeType || 'full';
+          if (wipeType === 'catalog_only') {
+            this.wipeCatalogLocally();
+          } else if (wipeType === 'staff_only') {
+            this.resetAllUsersLocally();
+          } else {
+            this.factoryResetEverythingLocally();
+          }
+          if (onWipeDetected) onWipeDetected(wipeType, remoteWipeTs);
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('sappy-cross-device-wipe', {
+                detail: { wipeType, timestamp: remoteWipeTs },
+              })
+            );
+          }
+        }
+      })
+      .catch((err) => console.warn('Initial system meta check notice:', err));
+
+    const unsubscribe = onSnapshot(
+      doc(db, 'system', 'meta'),
+      (snap) => {
+        if (!snap.exists()) return;
+        const data = snap.data();
+        const remoteWipeTs = Number(data?.lastWipeTimestamp || 0);
+        const localKnownWipeTs = Number(localStorage.getItem('sappy_last_known_wipe_ts') || 0);
+
+        if (remoteWipeTs > 0 && remoteWipeTs > localKnownWipeTs) {
+          localStorage.setItem('sappy_last_known_wipe_ts', String(remoteWipeTs));
+          const wipeType = data?.wipeType || 'full';
+          if (wipeType === 'catalog_only') {
+            this.wipeCatalogLocally();
+          } else if (wipeType === 'staff_only') {
+            this.resetAllUsersLocally();
+          } else {
+            this.factoryResetEverythingLocally();
+          }
+          if (onWipeDetected) onWipeDetected(wipeType, remoteWipeTs);
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('sappy-cross-device-wipe', {
+                detail: { wipeType, timestamp: remoteWipeTs },
+              })
+            );
+          }
+        }
+      },
+      (err) => console.warn('Real-time system meta wipe listener notice:', err)
+    );
+
+    return unsubscribe;
+  }
+
+  wipeCatalogLocally(options?: { resetSettings?: boolean }) {
     if (!this.isBrowser()) return;
     localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify([]));
     localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify([]));
@@ -2837,20 +3128,46 @@ class StorageService {
     if (options?.resetSettings) {
       localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(DEFAULT_SETTINGS));
     }
-    this.addAuditLog('SYSTEM_RESET', 'SETTINGS', 'All database records, products, customers, and transactions wiped clean.');
+  }
+
+  // Completely wipe all store data and start 100% fresh across all devices (No demo data)
+  async wipeAllData(options?: { resetSettings?: boolean }) {
+    if (!this.isBrowser()) return;
+    const now = Date.now();
+    localStorage.setItem('sappy_last_known_wipe_ts', String(now));
+
+    // 1. Wipe Cloud Firestore catalog & transactions across all devices
+    await this.clearCatalogFirestoreData(options, now);
+
+    // 2. Wipe Backend Server
     try {
-      fetch('/api/reset-all-data', {
+      await fetch('/api/reset-all-data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ resetSettings: options?.resetSettings }),
-      }).catch(() => {});
+      });
     } catch {}
+
+    // 3. Wipe local catalog
+    this.wipeCatalogLocally(options);
+
+    this.addAuditLog('SYSTEM_RESET', 'SETTINGS', 'All database records, products, customers, and transactions wiped clean across all devices.');
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('sappy-cross-device-wipe', {
+          detail: { wipeType: 'catalog_only', timestamp: now },
+        })
+      );
+    }
   }
 
   // Completely wipe everything locally including all users, staff, and credentials
   factoryResetEverythingLocally() {
     if (!this.isBrowser()) return;
+    const knownWipeTs = localStorage.getItem('sappy_last_known_wipe_ts') || String(Date.now());
     localStorage.clear();
+    localStorage.setItem('sappy_last_known_wipe_ts', knownWipeTs);
     localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify([]));
     localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify([]));
     localStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify([]));
@@ -2875,6 +3192,15 @@ class StorageService {
 
   // Factory reset: Removes EVERYTHING including all users across all devices
   async factoryResetEverything(masterPasscode?: string): Promise<{ success: boolean; message: string }> {
+    const now = Date.now();
+    if (this.isBrowser()) {
+      localStorage.setItem('sappy_last_known_wipe_ts', String(now));
+    }
+
+    // 1. Wipe Cloud Firestore completely (all collections and signal system/meta)
+    await this.clearAllFirestoreData(now);
+
+    // 2. Wipe Backend Server
     try {
       const res = await fetch('/api/system/wipe-everything', {
         method: 'POST',
@@ -2892,7 +3218,18 @@ class StorageService {
       console.warn('Backend factory reset notice:', err?.message);
     }
 
+    // 3. Wipe local device storage and credentials
     this.factoryResetEverythingLocally();
+
+    // 4. Dispatch event for local window
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('sappy-cross-device-wipe', {
+          detail: { wipeType: 'full', timestamp: now },
+        })
+      );
+    }
+
     return {
       success: true,
       message: 'System factory reset successful. All users, inventory, sales, customers, and data have been wiped clean across all devices.',
@@ -2900,6 +3237,12 @@ class StorageService {
   }
 
   async syncEverythingWithFirestore(): Promise<{ success: boolean; message: string }> {
+    if (this.isFirestoreQuotaExceeded) {
+      return {
+        success: false,
+        message: 'Daily Cloud Firestore free quota reached (resets daily at 00:00 UTC). Store is operating smoothly via local storage & server sync.',
+      };
+    }
     try {
       const products = this.getProducts();
       if (products.length > 0) {
@@ -2933,6 +3276,7 @@ class StorageService {
         message: 'All local POS data successfully synced to Cloud Firestore across all devices!',
       };
     } catch (err: any) {
+      this.handleFirestoreQuotaError(err);
       console.warn('syncEverythingWithFirestore error:', err);
       return {
         success: false,
@@ -2954,6 +3298,8 @@ export interface AutoSyncState {
   status: 'idle' | 'syncing' | 'synced' | 'error' | 'offline';
   pendingQueueCount: number;
   lastError: string | null;
+  isQuotaExceeded?: boolean;
+  quotaMessage?: string | null;
   stats?: {
     productsCount: number;
     salesCount: number;
