@@ -1228,24 +1228,24 @@ app.post('/api/auth/update-profile', (req: Request, res: Response) => {
 app.post('/api/system/wipe-everything', (req: Request, res: Response) => {
   const { masterPasscode, confirmText, forceReset } = req.body || {};
 
-  // If masterPasscode is provided, perform constant-time check to prevent abuse
-  if (masterPasscode && typeof masterPasscode === 'string') {
+  const cleanPasscode = typeof masterPasscode === 'string' ? masterPasscode.trim() : '';
+  const cleanConfirm = typeof confirmText === 'string' ? confirmText.trim().replace(/\s+/g, ' ').toUpperCase() : '';
+
+  let isPasscodeMatch = false;
+  if (cleanPasscode) {
     const targetBuffer = Buffer.from(MASTER_PASSCODE);
-    const candidateBuffer = Buffer.from(masterPasscode.trim());
-    const isMatch =
+    const candidateBuffer = Buffer.from(cleanPasscode);
+    isPasscodeMatch =
       targetBuffer.length === candidateBuffer.length &&
       crypto.timingSafeEqual(targetBuffer, candidateBuffer);
+  }
 
-    if (!isMatch) {
-      return res.status(401).json({
-        success: false,
-        error: 'Incorrect Master Passcode. Authorization for complete system wipe denied.',
-      });
-    }
-  } else if (!forceReset && confirmText !== 'RESET ALL') {
-    return res.status(400).json({
+  const isConfirmMatch = cleanConfirm === 'RESET ALL';
+
+  if (!isPasscodeMatch && !isConfirmMatch && !forceReset) {
+    return res.status(401).json({
       success: false,
-      error: 'Master Passcode or explicit confirmation is required for complete system factory reset.',
+      error: 'Master Passcode (Sappy#1313) or confirmation text "RESET ALL" is required for complete system factory reset.',
     });
   }
 

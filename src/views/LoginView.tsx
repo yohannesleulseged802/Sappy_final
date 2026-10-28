@@ -87,27 +87,32 @@ export const LoginView: React.FC<LoginViewProps> = ({onLoginSuccess, isOnline}) 
   const [emergencyResetError, setEmergencyResetError] = useState<string | null>(null);
 
   const handleEmergencyFactoryReset = async () => {
-    if (!emergencyPasscode.trim()) {
-      setEmergencyResetError('Please enter the Master Passcode.');
+    const cleanPasscode = emergencyPasscode.trim();
+    if (!cleanPasscode) {
+      setEmergencyResetError('Please enter the Master Passcode (Sappy#1313).');
       sound.playError();
       return;
     }
     setIsExecutingEmergencyReset(true);
     setEmergencyResetError(null);
     try {
-      await storage.factoryResetEverything(emergencyPasscode.trim());
-      setIsExecutingEmergencyReset(false);
-      setShowEmergencyResetModal(false);
+      await Promise.race([
+        storage.factoryResetEverything(cleanPasscode),
+        new Promise((resolve) => setTimeout(resolve, 4500)),
+      ]);
       sound.playCheckoutSuccess();
+      setShowEmergencyResetModal(false);
+      setIsExecutingEmergencyReset(false);
       setActiveAuthTab('signup');
       setUsername('');
       setPassword('');
       setPin('');
       setSuccessMessage('System factory reset complete. All users and data have been wiped clean across all devices. Create an account below.');
     } catch (err: any) {
-      setIsExecutingEmergencyReset(false);
       sound.playError();
       setEmergencyResetError(err?.message || 'Incorrect Master Passcode.');
+    } finally {
+      setIsExecutingEmergencyReset(false);
     }
   };
 

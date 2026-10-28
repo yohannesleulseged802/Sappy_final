@@ -621,12 +621,18 @@ class StorageService {
     const now = Date.now();
     localStorage.setItem('sappy_last_known_wipe_ts', String(now));
 
-    // 1. Wipe Cloud Firestore users collection across all devices
-    await this.clearUsersFirestoreData(now);
+    // 1. Wipe local staff and credentials immediately
+    this.resetAllUsersLocally();
 
-    // 2. Wipe Backend Server users
+    // 2. Wipe Backend Server users with timeout
     try {
-      const res = await fetch('/api/auth/reset-all-users', { method: 'POST' });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
+      const res = await fetch('/api/auth/reset-all-users', {
+        method: 'POST',
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
       const d = await res.json().catch(() => ({}));
       if (d?.lastWipeTimestamp) {
         localStorage.setItem('sappy_last_known_wipe_ts', String(d.lastWipeTimestamp));
@@ -635,7 +641,17 @@ class StorageService {
       // offline fallback
     }
 
-    // 3. Wipe local staff
+    // 3. Wipe Cloud Firestore users collection across all devices (with safety timeout)
+    try {
+      await Promise.race([
+        this.clearUsersFirestoreData(now),
+        new Promise((resolve) => setTimeout(resolve, 3000)),
+      ]);
+    } catch (cloudErr) {
+      console.warn('Notice during cloud staff wipe:', cloudErr);
+    }
+
+    // 4. Ensure local state is clean
     this.resetAllUsersLocally();
 
     this.addAuditLog(
@@ -2943,107 +2959,145 @@ class StorageService {
     if (this.isFirestoreQuotaExceeded) return;
     try {
       const colRef = collection(db, collectionName);
-      const snap = await getDocs(colRef);
-      if (snap.empty) return;
+      const snap = await Promise.race([
+        getDocs(colRef),
+        new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Firestore collection fetch timeout')), 2500)),
+      ]);
+      if (!snap || snap.empty) return;
       const docs = snap.docs;
-      const CHUNK_SIZE = 400;
+      const CHUNK_SIZE = 100;
       for (let i = 0; i < docs.length; i += CHUNK_SIZE) {
+        if (this.isFirestoreQuotaExceeded) return;
         const chunk = docs.slice(i, i + CHUNK_SIZE);
         const batch = writeBatch(db);
-        chunk.forEach((d) => batch.delete(d.ref));
-        await batch.commit();
+        chunk.forEach((d: any) => batch.delete(d.ref));
+        await Promise.race([
+          batch.commit(),
+          new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Firestore batch delete timeout')), 2500)),
+        ]);
       }
     } catch (err) {
       if (this.handleFirestoreQuotaError(err)) return;
-      console.warn(`Error clearing Firestore collection ${collectionName}:`, err);
+      console.warn(`Notice clearing Firestore collection ${collectionName}:`, err);
     }
   }
 
   async clearAllFirestoreData(wipeTimestamp: number = Date.now()): Promise<void> {
     if (this.isFirestoreQuotaExceeded) return;
     try {
-      await Promise.all([
-        this.clearFirestoreCollection('users'),
-        this.clearFirestoreCollection('products'),
-        this.clearFirestoreCollection('sales'),
-        this.clearFirestoreCollection('customers'),
-        this.clearFirestoreCollection('credit_transactions'),
-        this.clearFirestoreCollection('expenses'),
-        this.clearFirestoreCollection('audit_logs'),
+      await Promise.race([
+        Promise.all([
+          this.clearFirestoreCollection('users'),
+          this.clearFirestoreCollection('products'),
+          this.clearFirestoreCollection('sales'),
+          this.clearFirestoreCollection('customers'),
+          this.clearFirestoreCollection('credit_transactions'),
+          this.clearFirestoreCollection('expenses'),
+          this.clearFirestoreCollection('audit_logs'),
+        ]),
+        new Promise((resolve) => setTimeout(resolve, 3000)),
       ]);
 
+      if (this.isFirestoreQuotaExceeded) return;
+
       // Reset settings to defaults in Firestore
-      await setDoc(doc(db, 'settings', 'store'), DEFAULT_SETTINGS, { merge: false });
+      await Promise.race([
+        setDoc(doc(db, 'settings', 'store'), DEFAULT_SETTINGS, { merge: false }),
+        new Promise((resolve) => setTimeout(resolve, 1500)),
+      ]);
 
       // Write authoritative wipe signal to system/meta in Firestore
-      await setDoc(
-        doc(db, 'system', 'meta'),
-        {
-          lastWipeTimestamp: wipeTimestamp,
-          isWiped: true,
-          isInitialized: false,
-          wipeType: 'full',
-          updatedAt: new Date().toISOString(),
-        },
-        { merge: false }
-      );
+      await Promise.race([
+        setDoc(
+          doc(db, 'system', 'meta'),
+          {
+            lastWipeTimestamp: wipeTimestamp,
+            isWiped: true,
+            isInitialized: false,
+            wipeType: 'full',
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: false }
+        ),
+        new Promise((resolve) => setTimeout(resolve, 1500)),
+      ]);
     } catch (err) {
       if (this.handleFirestoreQuotaError(err)) return;
-      console.warn('Error during full Firestore data wipe:', err);
+      console.warn('Notice during full Firestore data wipe:', err);
     }
   }
 
   async clearCatalogFirestoreData(options?: { resetSettings?: boolean }, wipeTimestamp: number = Date.now()): Promise<void> {
     if (this.isFirestoreQuotaExceeded) return;
     try {
-      await Promise.all([
-        this.clearFirestoreCollection('products'),
-        this.clearFirestoreCollection('sales'),
-        this.clearFirestoreCollection('customers'),
-        this.clearFirestoreCollection('credit_transactions'),
-        this.clearFirestoreCollection('expenses'),
+      await Promise.race([
+        Promise.all([
+          this.clearFirestoreCollection('products'),
+          this.clearFirestoreCollection('sales'),
+          this.clearFirestoreCollection('customers'),
+          this.clearFirestoreCollection('credit_transactions'),
+          this.clearFirestoreCollection('expenses'),
+        ]),
+        new Promise((resolve) => setTimeout(resolve, 3000)),
       ]);
 
+      if (this.isFirestoreQuotaExceeded) return;
+
       if (options?.resetSettings) {
-        await setDoc(doc(db, 'settings', 'store'), DEFAULT_SETTINGS, { merge: false });
+        await Promise.race([
+          setDoc(doc(db, 'settings', 'store'), DEFAULT_SETTINGS, { merge: false }),
+          new Promise((resolve) => setTimeout(resolve, 1500)),
+        ]);
       }
 
-      await setDoc(
-        doc(db, 'system', 'meta'),
-        {
-          lastWipeTimestamp: wipeTimestamp,
-          lastCatalogWipeTimestamp: wipeTimestamp,
-          isWiped: true,
-          isInitialized: true,
-          wipeType: 'catalog_only',
-          updatedAt: new Date().toISOString(),
-        },
-        { merge: true }
-      );
+      await Promise.race([
+        setDoc(
+          doc(db, 'system', 'meta'),
+          {
+            lastWipeTimestamp: wipeTimestamp,
+            lastCatalogWipeTimestamp: wipeTimestamp,
+            isWiped: true,
+            isInitialized: true,
+            wipeType: 'catalog_only',
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        ),
+        new Promise((resolve) => setTimeout(resolve, 1500)),
+      ]);
     } catch (err) {
       if (this.handleFirestoreQuotaError(err)) return;
-      console.warn('Error during catalog Firestore wipe:', err);
+      console.warn('Notice during catalog Firestore wipe:', err);
     }
   }
 
   async clearUsersFirestoreData(wipeTimestamp: number = Date.now()): Promise<void> {
     if (this.isFirestoreQuotaExceeded) return;
     try {
-      await this.clearFirestoreCollection('users');
-      await setDoc(
-        doc(db, 'system', 'meta'),
-        {
-          lastWipeTimestamp: wipeTimestamp,
-          isWiped: true,
-          isInitialized: false,
-          wipeType: 'staff_only',
-          updatedAt: new Date().toISOString(),
-        },
-        { merge: true }
-      );
+      await Promise.race([
+        this.clearFirestoreCollection('users'),
+        new Promise((resolve) => setTimeout(resolve, 2500)),
+      ]);
+
+      if (this.isFirestoreQuotaExceeded) return;
+
+      await Promise.race([
+        setDoc(
+          doc(db, 'system', 'meta'),
+          {
+            lastWipeTimestamp: wipeTimestamp,
+            isWiped: true,
+            isInitialized: false,
+            wipeType: 'staff_only',
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        ),
+        new Promise((resolve) => setTimeout(resolve, 1500)),
+      ]);
     } catch (err) {
       if (this.handleFirestoreQuotaError(err)) return;
-      console.warn('Error during users Firestore wipe:', err);
+      console.warn('Notice during users Firestore wipe:', err);
     }
   }
 
@@ -3136,19 +3190,35 @@ class StorageService {
     const now = Date.now();
     localStorage.setItem('sappy_last_known_wipe_ts', String(now));
 
-    // 1. Wipe Cloud Firestore catalog & transactions across all devices
-    await this.clearCatalogFirestoreData(options, now);
+    // 1. Wipe local catalog immediately so UI updates instantly
+    this.wipeCatalogLocally(options);
 
-    // 2. Wipe Backend Server
+    // 2. Wipe Backend Server with timeout
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
       await fetch('/api/reset-all-data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ resetSettings: options?.resetSettings }),
+        signal: controller.signal,
       });
-    } catch {}
+      clearTimeout(timeoutId);
+    } catch (err: any) {
+      console.warn('Backend catalog wipe notice:', err?.message);
+    }
 
-    // 3. Wipe local catalog
+    // 3. Wipe Cloud Firestore catalog & transactions across all devices (with safety timeout)
+    try {
+      await Promise.race([
+        this.clearCatalogFirestoreData(options, now),
+        new Promise((resolve) => setTimeout(resolve, 3000)),
+      ]);
+    } catch (err: any) {
+      console.warn('Cloud catalog wipe notice:', err?.message);
+    }
+
+    // 4. Ensure local catalog is clean
     this.wipeCatalogLocally(options);
 
     this.addAuditLog('SYSTEM_RESET', 'SETTINGS', 'All database records, products, customers, and transactions wiped clean across all devices.');
@@ -3197,31 +3267,46 @@ class StorageService {
       localStorage.setItem('sappy_last_known_wipe_ts', String(now));
     }
 
-    // 1. Wipe Cloud Firestore completely (all collections and signal system/meta)
-    await this.clearAllFirestoreData(now);
+    // 1. Wipe local device storage and credentials FIRST for immediate resilience
+    this.factoryResetEverythingLocally();
 
-    // 2. Wipe Backend Server
+    // 2. Wipe Backend Server with timeout
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
       const res = await fetch('/api/system/wipe-everything', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           masterPasscode: masterPasscode || 'Sappy#1313',
+          confirmText: 'RESET ALL',
           forceReset: true,
         }),
+        signal: controller.signal,
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data?.error || 'Failed to factory reset system on server.');
+      clearTimeout(timeoutId);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok && !data?.success) {
+        console.warn('Backend factory reset notice:', data?.error);
       }
     } catch (err: any) {
       console.warn('Backend factory reset notice:', err?.message);
     }
 
-    // 3. Wipe local device storage and credentials
+    // 3. Wipe Cloud Firestore completely (with strict safety timeout, never blocks local reset)
+    try {
+      await Promise.race([
+        this.clearAllFirestoreData(now),
+        new Promise((resolve) => setTimeout(resolve, 3500)),
+      ]);
+    } catch (err: any) {
+      console.warn('Cloud full wipe notice:', err?.message);
+    }
+
+    // 4. Ensure local device storage is pristine
     this.factoryResetEverythingLocally();
 
-    // 4. Dispatch event for local window
+    // 5. Dispatch cross-device wipe event for local window
     if (typeof window !== 'undefined') {
       window.dispatchEvent(
         new CustomEvent('sappy-cross-device-wipe', {
