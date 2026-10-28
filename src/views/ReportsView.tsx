@@ -177,9 +177,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               <button
                 key={range}
                 onClick={() => setTimeRange(range)}
-                className={`px-3 py-1.5 rounded-lg transition capitalize ${
+                className={`px-3 py-1.5 min-h-[44px] sm:min-h-0 flex items-center justify-center rounded-lg transition capitalize touch-manipulation cursor-pointer ${
                   timeRange === range
-                    ? 'bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 shadow-xs'
+                    ? 'bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 shadow-xs font-bold'
                     : 'text-stone-500'
                 }`}
               >
@@ -190,7 +190,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
           <button
             onClick={handleDownloadPDFReport}
-            className="px-3.5 py-2 bg-[#064e3b] hover:bg-[#043b2c] text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
+            className="px-3.5 py-2 min-h-[44px] sm:min-h-0 bg-[#064e3b] hover:bg-[#043b2c] text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm touch-manipulation cursor-pointer"
           >
             <FileDown className="w-4 h-4" />
             <span>Export PDF Report</span>
@@ -202,7 +202,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <div className="p-4 bg-white dark:bg-[#1c1815] border border-[#e6dfd5] dark:border-[#362e26] rounded-2xl">
           <span className="text-xs text-stone-500 uppercase font-bold block mb-1">Total Sales Revenue</span>
-          <div className="text-xl sm:text-2xl font-black font-mono-numbers text-stone-900 dark:text-stone-100">
+          <div className="text-xl sm:text-2xl font-black font-mono-numbers tabular-nums whitespace-nowrap text-stone-900 dark:text-stone-100">
             {totalRevenue.toFixed(2)}
             <span className="text-xs text-stone-400 font-normal ml-1">{settings.currency}</span>
           </div>
@@ -213,7 +213,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
         <div className="p-4 bg-white dark:bg-[#1c1815] border border-[#e6dfd5] dark:border-[#362e26] rounded-2xl">
           <span className="text-xs text-stone-500 uppercase font-bold block mb-1">Cost of Goods (COGS)</span>
-          <div className="text-xl sm:text-2xl font-black font-mono-numbers text-stone-600 dark:text-stone-300">
+          <div className="text-xl sm:text-2xl font-black font-mono-numbers tabular-nums whitespace-nowrap text-stone-600 dark:text-stone-300">
             {totalCOGS.toFixed(2)}
             <span className="text-xs text-stone-400 font-normal ml-1">{settings.currency}</span>
           </div>
@@ -224,7 +224,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           <span className="text-xs text-emerald-800 dark:text-emerald-300 uppercase font-bold block mb-1">
             Estimated Gross Profit
           </span>
-          <div className="text-xl sm:text-2xl font-black font-mono-numbers text-emerald-800 dark:text-emerald-300">
+          <div className="text-xl sm:text-2xl font-black font-mono-numbers tabular-nums whitespace-nowrap text-emerald-800 dark:text-emerald-300">
             {grossProfit.toFixed(2)}
             <span className="text-xs font-normal ml-1">{settings.currency}</span>
           </div>
@@ -235,7 +235,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
         <div className="p-4 bg-white dark:bg-[#1c1815] border border-[#e6dfd5] dark:border-[#362e26] rounded-2xl">
           <span className="text-xs text-stone-500 uppercase font-bold block mb-1">Outstanding Store Credit</span>
-          <div className="text-xl sm:text-2xl font-black font-mono-numbers text-amber-600 dark:text-amber-400">
+          <div className="text-xl sm:text-2xl font-black font-mono-numbers tabular-nums whitespace-nowrap text-amber-600 dark:text-amber-400">
             {outstandingCredit.toFixed(2)}
             <span className="text-xs text-stone-400 font-normal ml-1">{settings.currency}</span>
           </div>

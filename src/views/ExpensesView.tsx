@@ -114,9 +114,9 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
         <span className="text-stone-500">
           Showing {filteredExpenses.length} expense record(s)
         </span>
-        <div className="font-bold">
+        <div className="font-bold flex items-center gap-1">
           <span>Total Expenses: </span>
-          <span className="font-mono text-rose-600 font-black">
+          <span className="font-mono text-rose-600 font-black tabular-nums whitespace-nowrap">
             {totalExpenseSum.toFixed(2)} {settings.currency}
           </span>
         </div>
@@ -125,7 +125,56 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
       {/* Expenses Table */}
       <div className="flex-1 min-h-0 overflow-y-auto touch-scroll overscroll-contain p-3 pb-24 md:pb-3">
         <div className="bg-white dark:bg-[#1c1815] border border-[#e6dfd5] dark:border-[#362e26] rounded-2xl shadow-xs overflow-hidden">
-          <div className="overflow-x-auto">
+          {/* Mobile View: Stacked Cards (< 640px) */}
+          <div className="block sm:hidden divide-y divide-[#e6dfd5] dark:divide-[#2d251f]">
+            {filteredExpenses.map((exp) => (
+              <div key={`exp-card-${exp.id}`} className="p-3.5 space-y-2 bg-white dark:bg-[#1c1815]">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="font-extrabold text-sm text-stone-900 dark:text-stone-100">
+                      {exp.description}
+                    </div>
+                    <div className="text-[11px] text-stone-400 font-mono mt-0.5">
+                      {new Date(exp.date).toLocaleDateString([], {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                      })} • Logged by: {exp.paidBy}
+                    </div>
+                  </div>
+
+                  <div className="text-right shrink-0">
+                    <div className="text-base font-black font-mono-numbers tabular-nums whitespace-nowrap text-rose-600 dark:text-rose-400">
+                      -{exp.amount.toFixed(2)} {settings.currency}
+                    </div>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300 inline-block mt-0.5">
+                      {exp.category}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between text-xs text-stone-500 pt-1 border-t border-stone-100 dark:border-stone-800/80">
+                  <span className="font-mono text-[11px] uppercase">
+                    Paid via: {exp.paidWith.replace('_', ' ')}
+                  </span>
+                  {exp.receiptRef && (
+                    <span className="font-mono text-[10px] text-stone-400">
+                      Ref: {exp.receiptRef}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            {filteredExpenses.length === 0 && (
+              <div className="p-10 text-center text-stone-400 text-xs">
+                No expense records found.
+              </div>
+            )}
+          </div>
+
+          {/* Desktop & Tablet View: Full Table (>= 640px) */}
+          <div className="hidden sm:block overflow-x-auto">
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="bg-[#f5f1e8] dark:bg-[#25201b] border-b border-[#e6dfd5] dark:border-[#362e26] text-stone-700 dark:text-stone-300 font-bold uppercase tracking-wider">

@@ -2624,6 +2624,203 @@ class StorageService {
     localStorage.setItem(STORAGE_KEYS.SYNC_QUEUE, JSON.stringify([]));
   }
 
+  async processSyncQueue(): Promise<number> {
+    if (!this.isBrowser()) return 0;
+    const queue = this.getSyncQueue();
+    if (queue.length === 0) return 0;
+
+    const remainingQueue: SyncQueueItem[] = [];
+    let processedCount = 0;
+
+    for (const item of queue) {
+      try {
+        if (item.entityType === 'product' && item.payload) {
+          await this.pushProductToFirestore(item.payload);
+        } else if (item.entityType === 'sale' && item.payload) {
+          await this.pushSaleToFirestore(item.payload);
+        } else if (item.entityType === 'customer' && item.payload) {
+          await this.pushCustomerToFirestore(item.payload);
+        } else if (item.entityType === 'credit' && item.payload) {
+          await this.pushCreditTransactionToFirestore(item.payload);
+        } else if (item.entityType === 'expense' && item.payload) {
+          await this.pushExpenseToFirestore(item.payload);
+        }
+        processedCount++;
+      } catch (err) {
+        console.warn('Sync queue item process error:', item.id, err);
+        item.retries = (item.retries || 0) + 1;
+        if (item.retries < 5) {
+          remainingQueue.push(item);
+        }
+      }
+    }
+
+    localStorage.setItem(STORAGE_KEYS.SYNC_QUEUE, JSON.stringify(remainingQueue));
+    return processedCount;
+  }
+
+  // --- Auto-Sync Engine (10-Second Cadence) ---
+  private autoSyncTimer: any = null;
+  private isSyncInProgress: boolean = false;
+  private autoSyncListeners: Set<(state: AutoSyncState) => void> = new Set();
+  private currentAutoSyncState: AutoSyncState = {
+    isActive: true,
+    intervalSeconds: 10,
+    lastSyncedAt: null,
+    status: 'idle',
+    pendingQueueCount: 0,
+    lastError: null,
+  };
+
+  getAutoSyncState(): AutoSyncState {
+    const lastSyncedAt = this.isBrowser() ? localStorage.getItem('sappy_last_synced_at') : null;
+    return {
+      ...this.currentAutoSyncState,
+      lastSyncedAt: this.currentAutoSyncState.lastSyncedAt || lastSyncedAt,
+      pendingQueueCount: this.getSyncQueue().length,
+    };
+  }
+
+  subscribeAutoSync(listener: (state: AutoSyncState) => void): () => void {
+    this.autoSyncListeners.add(listener);
+    listener(this.getAutoSyncState());
+    return () => {
+      this.autoSyncListeners.delete(listener);
+    };
+  }
+
+  private notifyAutoSyncListeners() {
+    const state = this.getAutoSyncState();
+    this.autoSyncListeners.forEach((listener) => {
+      try {
+        listener(state);
+      } catch (err) {
+        console.warn('Auto-sync listener error:', err);
+      }
+    });
+  }
+
+  async performAutoSync(): Promise<AutoSyncState> {
+    if (this.isSyncInProgress) {
+      return this.getAutoSyncState();
+    }
+
+    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+    if (!isOnline) {
+      this.currentAutoSyncState = {
+        ...this.currentAutoSyncState,
+        status: 'offline',
+        pendingQueueCount: this.getSyncQueue().length,
+      };
+      this.notifyAutoSyncListeners();
+      return this.getAutoSyncState();
+    }
+
+    this.isSyncInProgress = true;
+    this.currentAutoSyncState = {
+      ...this.currentAutoSyncState,
+      status: 'syncing',
+      lastError: null,
+    };
+    this.notifyAutoSyncListeners();
+
+    try {
+      // 1. Process any queued mutations from offline sessions
+      await this.processSyncQueue();
+
+      // 2. Push/merge full snapshot with Cloud Firestore
+      await this.syncEverythingWithFirestore();
+
+      // 3. Synchronize with central server backend
+      await this.syncAllDataWithBackend();
+
+      const nowIso = new Date().toISOString();
+      if (this.isBrowser()) {
+        localStorage.setItem('sappy_last_synced_at', nowIso);
+      }
+
+      const products = this.getProducts();
+      const sales = this.getSales();
+      const customers = this.getCustomers();
+      const staff = this.getStaffList();
+
+      this.currentAutoSyncState = {
+        isActive: true,
+        intervalSeconds: 10,
+        lastSyncedAt: nowIso,
+        status: 'synced',
+        pendingQueueCount: this.getSyncQueue().length,
+        lastError: null,
+        stats: {
+          productsCount: products.length,
+          salesCount: sales.length,
+          customersCount: customers.length,
+          staffCount: staff.length,
+        },
+      };
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('sappy-auto-synced', { detail: this.currentAutoSyncState })
+        );
+      }
+    } catch (err: any) {
+      console.warn('Auto-sync execution error:', err);
+      this.currentAutoSyncState = {
+        ...this.currentAutoSyncState,
+        status: 'error',
+        lastError: err?.message || 'Sync failed',
+        pendingQueueCount: this.getSyncQueue().length,
+      };
+    } finally {
+      this.isSyncInProgress = false;
+      this.notifyAutoSyncListeners();
+    }
+
+    return this.getAutoSyncState();
+  }
+
+  startAutoSync(intervalSeconds: number = 10, onSync?: (state: AutoSyncState) => void): () => void {
+    if (this.autoSyncTimer) {
+      clearInterval(this.autoSyncTimer);
+      this.autoSyncTimer = null;
+    }
+
+    this.currentAutoSyncState.isActive = true;
+    this.currentAutoSyncState.intervalSeconds = intervalSeconds;
+    this.notifyAutoSyncListeners();
+
+    // Trigger an initial sync cycle immediately
+    this.performAutoSync().then((state) => {
+      if (onSync) onSync(state);
+    });
+
+    const intervalMs = Math.max(3000, intervalSeconds * 1000); // 10s default
+    this.autoSyncTimer = setInterval(() => {
+      this.performAutoSync().then((state) => {
+        if (onSync) onSync(state);
+      });
+    }, intervalMs);
+
+    return () => {
+      if (this.autoSyncTimer) {
+        clearInterval(this.autoSyncTimer);
+        this.autoSyncTimer = null;
+      }
+      this.currentAutoSyncState.isActive = false;
+      this.notifyAutoSyncListeners();
+    };
+  }
+
+  stopAutoSync(): void {
+    if (this.autoSyncTimer) {
+      clearInterval(this.autoSyncTimer);
+      this.autoSyncTimer = null;
+    }
+    this.currentAutoSyncState.isActive = false;
+    this.notifyAutoSyncListeners();
+  }
+
   // Completely wipe all store data and start 100% fresh (No demo data)
   wipeAllData(options?: { resetSettings?: boolean }) {
     if (!this.isBrowser()) return;
@@ -2750,6 +2947,22 @@ class StorageService {
   }
 }
 
+export interface AutoSyncState {
+  isActive: boolean;
+  intervalSeconds: number;
+  lastSyncedAt: string | null;
+  status: 'idle' | 'syncing' | 'synced' | 'error' | 'offline';
+  pendingQueueCount: number;
+  lastError: string | null;
+  stats?: {
+    productsCount: number;
+    salesCount: number;
+    customersCount: number;
+    staffCount: number;
+  };
+}
+
 export const storage = new StorageService();
 // Initialize immediately
 storage.init();
+

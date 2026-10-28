@@ -407,21 +407,21 @@ export const CreditAccountsView: React.FC<CreditAccountsViewProps> = ({
 
               <div className="p-3 bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-xl">
                 <div className="text-[10px] text-stone-400 uppercase font-bold">Current Balance Owed</div>
-                <div className="text-lg font-black font-mono-numbers text-amber-600 dark:text-amber-400 mt-1">
+                <div className="text-lg font-black font-mono-numbers tabular-nums whitespace-nowrap text-amber-600 dark:text-amber-400 mt-1">
                   {selectedCustomer.currentBalance.toFixed(2)} {settings.currency}
                 </div>
               </div>
 
               <div className="p-3 bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-xl">
                 <div className="text-[10px] text-stone-400 uppercase font-bold">Approved Credit Limit</div>
-                <div className="text-lg font-black font-mono-numbers text-stone-800 dark:text-stone-200 mt-1">
+                <div className="text-lg font-black font-mono-numbers tabular-nums whitespace-nowrap text-stone-800 dark:text-stone-200 mt-1">
                   {selectedCustomer.creditLimit.toFixed(2)} {settings.currency}
                 </div>
               </div>
 
               <div className="p-3 bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-xl">
                 <div className="text-[10px] text-stone-400 uppercase font-bold">Remaining Available Credit</div>
-                <div className="text-lg font-black font-mono-numbers text-emerald-700 dark:text-emerald-400 mt-1">
+                <div className="text-lg font-black font-mono-numbers tabular-nums whitespace-nowrap text-emerald-700 dark:text-emerald-400 mt-1">
                   {Math.max(0, selectedCustomer.creditLimit - selectedCustomer.currentBalance).toFixed(2)}{' '}
                   {settings.currency}
                 </div>
@@ -433,7 +433,59 @@ export const CreditAccountsView: React.FC<CreditAccountsViewProps> = ({
               <h4 className="text-xs font-bold uppercase tracking-wider text-stone-500 mb-2">
                 Transaction &amp; Payment Ledger
               </h4>
-              <div className="border border-stone-200 dark:border-stone-800 rounded-xl overflow-hidden text-xs">
+
+              {/* Mobile View: Stacked Cards (< 640px) */}
+              <div className="block sm:hidden divide-y divide-stone-100 dark:divide-stone-800 border border-stone-200 dark:border-stone-800 rounded-xl overflow-hidden bg-white dark:bg-stone-900 mb-3">
+                {transactions.map((t) => (
+                  <div key={`tx-card-${t.id}`} className="p-3 space-y-1.5 text-xs">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className={`px-1.5 py-0.5 rounded font-bold text-[10px] ${
+                            t.type === 'CHARGE'
+                              ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                              : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                          }`}
+                        >
+                          {t.type}
+                        </span>
+                        <span className="font-mono text-[11px] text-stone-400">
+                          {new Date(t.date).toLocaleString([], {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </span>
+                      </div>
+                      <div
+                        className={`font-mono font-black tabular-nums whitespace-nowrap text-sm ${
+                          t.type === 'CHARGE' ? 'text-amber-600' : 'text-emerald-600'
+                        }`}
+                      >
+                        {t.type === 'CHARGE' ? '+' : '-'}
+                        {t.amount.toFixed(2)} {settings.currency}
+                      </div>
+                    </div>
+                    <div className="text-stone-700 dark:text-stone-300 font-medium text-[11px]">
+                      {t.notes || 'No description notes'}
+                    </div>
+                    <div className="flex items-center justify-between text-[10px] text-stone-400 pt-1 font-mono">
+                      <span>Balance After: {t.balanceAfter.toFixed(2)} {settings.currency}</span>
+                      <span>Staff: {t.staffName}</span>
+                    </div>
+                  </div>
+                ))}
+
+                {transactions.length === 0 && (
+                  <div className="p-8 text-center text-stone-400 text-xs">
+                    No credit transactions recorded yet for this customer.
+                  </div>
+                )}
+              </div>
+
+              {/* Desktop & Tablet View: Full Table (>= 640px) */}
+              <div className="hidden sm:block border border-stone-200 dark:border-stone-800 rounded-xl overflow-hidden text-xs">
                 <table className="w-full text-left">
                   <thead className="bg-stone-50 dark:bg-stone-800 font-bold uppercase text-[10px] text-stone-600 dark:text-stone-300">
                     <tr>

@@ -444,11 +444,14 @@ export const BarcodeStudioView: React.FC<BarcodeStudioViewProps> = ({
             <div className="relative">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
               <input
-                type="text"
+                type="search"
+                inputMode="search"
+                enterKeyHint="search"
+                autoComplete="off"
                 value={searchProductQuery}
                 onChange={(e) => setSearchProductQuery(e.target.value)}
                 placeholder="Search name, SKU, or code..."
-                className="w-full bg-[#f5f1e8] dark:bg-[#25201b] border border-transparent focus:border-[#064e3b] dark:focus:border-[#6ee7b7] rounded-xl pl-9 pr-4 py-2 text-xs text-stone-900 dark:text-stone-100 placeholder-stone-400 focus:outline-hidden"
+                className="w-full bg-[#f5f1e8] dark:bg-[#25201b] border border-transparent focus:border-[#064e3b] dark:focus:border-[#6ee7b7] rounded-xl pl-9 pr-4 py-2 text-xs sm:text-xs text-stone-900 dark:text-stone-100 placeholder-stone-400 focus:outline-hidden"
               />
             </div>
 
@@ -506,6 +509,8 @@ export const BarcodeStudioView: React.FC<BarcodeStudioViewProps> = ({
             <div className="grid grid-cols-2 gap-2">
               <input
                 type="number"
+                inputMode="decimal"
+                step="any"
                 min="0"
                 value={customPrice || ''}
                 onChange={(e) => setCustomPrice(parseFloat(e.target.value) || 0)}

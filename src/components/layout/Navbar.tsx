@@ -17,7 +17,7 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import {Staff, StoreSettings} from '../../types';
-import {storage} from '../../services/storage';
+import {storage, AutoSyncState} from '../../services/storage';
 import {PWAInstallBadge} from '../common/PWAInstallBadge';
 import {SappyBrandLogo} from '../common/SappyBrandLogo';
 
@@ -45,11 +45,35 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [isOnline, setIsOnline] = useState(
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
-  const [isSyncing, setIsSyncing] = useState(false);
+  const [autoSyncState, setAutoSyncState] = useState<AutoSyncState>(() => storage.getAutoSyncState());
+  const [secondsAgo, setSecondsAgo] = useState<number>(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [syncQueueCount, setSyncQueueCount] = useState(0);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
+
+  // Subscribe to storage auto-sync state
+  useEffect(() => {
+    const unsubscribe = storage.subscribeAutoSync((state) => {
+      setAutoSyncState(state);
+    });
+    return unsubscribe;
+  }, []);
+
+  // Update "X seconds ago" ticker
+  useEffect(() => {
+    const updateTicker = () => {
+      if (!autoSyncState.lastSyncedAt) {
+        setSecondsAgo(0);
+        return;
+      }
+      const diffSec = Math.max(0, Math.floor((Date.now() - new Date(autoSyncState.lastSyncedAt).getTime()) / 1000));
+      setSecondsAgo(diffSec);
+    };
+
+    updateTicker();
+    const ticker = setInterval(updateTicker, 1000);
+    return () => clearInterval(ticker);
+  }, [autoSyncState.lastSyncedAt]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -64,15 +88,12 @@ export const Navbar: React.FC<NavbarProps> = ({
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
-      triggerSync();
+      storage.performAutoSync();
     };
     const handleOffline = () => setIsOnline(false);
 
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
-
-    // Initial sync queue count
-    setSyncQueueCount(storage.getSyncQueue().length);
 
     return () => {
       window.removeEventListener('online', handleOnline);
@@ -81,15 +102,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   }, []);
 
   const triggerSync = async () => {
-    setIsSyncing(true);
     try {
-      await storage.syncEverythingWithFirestore();
-      storage.clearSyncQueue();
-      setSyncQueueCount(0);
+      await storage.performAutoSync();
     } catch (err) {
       console.warn('Manual sync trigger error:', err);
-    } finally {
-      setIsSyncing(false);
     }
   };
 
@@ -102,6 +118,8 @@ export const Navbar: React.FC<NavbarProps> = ({
       setIsFullscreen(false);
     }
   };
+
+  const isSyncing = autoSyncState.status === 'syncing';
 
   return (
     <header className="sticky top-0 z-30 h-14 bg-white dark:bg-[#1c1815] border-b border-[#e6dfd5] dark:border-[#362e26] px-3 sm:px-4 flex items-center justify-between">
@@ -124,34 +142,39 @@ export const Navbar: React.FC<NavbarProps> = ({
 
       {/* Center/Right Status Indicators and Controls */}
       <div className="flex items-center gap-2 sm:gap-3">
-        {/* Offline / Online Sync Status Pill (Requirement #23) */}
+        {/* Offline / Online 10-Second Auto-Sync Status Pill */}
         <div className="flex items-center">
           {isSyncing ? (
             <button
               onClick={triggerSync}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 animate-pulse"
-              title="Synchronizing local database with cloud storage"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 animate-pulse border border-emerald-300 dark:border-emerald-700"
+              title="Auto-sync active: Synchronizing all store data across devices"
             >
-              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-              <span className="hidden sm:inline">↻ SYNCING</span>
+              <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-600 dark:text-emerald-400" />
+              <span className="text-[11px] font-bold">↻ AUTO-SYNCING (10s)</span>
             </button>
           ) : !isOnline ? (
             <div
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 border border-amber-300 dark:border-amber-800"
-              title="Operating in offline mode. All sales and edits are saved locally."
+              title="Operating in offline mode. Changes are queued locally and will auto-sync when reconnected."
             >
               <WifiOff className="w-3.5 h-3.5 text-amber-600" />
-              <span>● OFFLINE {syncQueueCount > 0 ? `(${syncQueueCount} queued)` : ''}</span>
+              <span>● OFFLINE {autoSyncState.pendingQueueCount > 0 ? `(${autoSyncState.pendingQueueCount} queued)` : ''}</span>
             </div>
           ) : (
             <button
               onClick={triggerSync}
-              className="flex items-center gap-1.5 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 transition"
-              title="Connected. Click to verify database synchronization."
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition cursor-pointer"
+              title={`Auto-syncing every 10 seconds. Last synced: ${secondsAgo === 0 ? 'just now' : `${secondsAgo}s ago`}. Click to force immediate sync.`}
             >
-              <Wifi className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-              <span className="hidden sm:inline">● ONLINE</span>
-              <span className="text-[10px] opacity-80 hidden lg:inline">✓ ALL DATA SYNCED</span>
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+              <span className="font-extrabold tracking-wide">AUTO-SYNC (10s)</span>
+              <span className="text-[10px] font-mono opacity-80 hidden lg:inline">
+                {secondsAgo <= 2 ? '• JUST NOW' : `• ${secondsAgo}s AGO`}
+              </span>
             </button>
           )}
         </div>

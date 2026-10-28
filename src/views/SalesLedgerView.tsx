@@ -93,11 +93,14 @@ export const SalesLedgerView: React.FC<SalesLedgerViewProps> = ({
           <div className="relative w-full">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
             <input
-              type="text"
+              type="search"
+              inputMode="search"
+              enterKeyHint="search"
+              autoComplete="off"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search by receipt #, cashier, customer, or product..."
-              className="w-full bg-[#f5f1e8] dark:bg-[#25201b] border border-transparent focus:border-[#064e3b] dark:focus:border-[#6ee7b7] rounded-xl pl-9 pr-4 py-2 text-xs text-stone-900 dark:text-stone-100 placeholder-stone-400 focus:outline-hidden"
+              className="w-full bg-[#f5f1e8] dark:bg-[#25201b] border border-transparent focus:border-[#064e3b] dark:focus:border-[#6ee7b7] rounded-xl pl-9 pr-4 py-2 text-xs sm:text-xs text-stone-900 dark:text-stone-100 placeholder-stone-400 focus:outline-hidden"
             />
           </div>
         </div>
@@ -141,7 +144,118 @@ export const SalesLedgerView: React.FC<SalesLedgerViewProps> = ({
       {/* Main Content: Sales Table */}
       <div className="flex-1 min-h-0 overflow-y-auto touch-scroll overscroll-contain p-3 pb-24 md:pb-3">
         <div className="bg-white dark:bg-[#1c1815] border border-[#e6dfd5] dark:border-[#362e26] rounded-2xl shadow-xs overflow-hidden">
-          <div className="overflow-x-auto">
+          {/* Mobile View: Stacked Cards (< 640px) */}
+          <div className="block sm:hidden divide-y divide-[#e6dfd5] dark:divide-[#2d251f]">
+            {filteredSales.map((s) => (
+              <div key={`card-${s.id}`} className="p-3.5 space-y-2.5 bg-white dark:bg-[#1c1815]">
+                {/* Top Header: Receipt # + Status Pill + Grand Total */}
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono font-black text-sm text-stone-900 dark:text-stone-100">
+                        {s.receiptNumber}
+                      </span>
+                      <span
+                        className={`text-[9px] px-1.5 py-0.2 rounded-full font-bold uppercase tracking-wider ${
+                          s.status === 'COMPLETED'
+                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                            : 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
+                        }`}
+                      >
+                        {s.status}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-stone-400 mt-0.5 font-mono">
+                      {new Date(s.date).toLocaleString([], {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="text-right">
+                    <div className="text-base font-black font-mono-numbers tabular-nums whitespace-nowrap text-stone-900 dark:text-stone-100">
+                      {s.grandTotal.toFixed(2)} {settings.currency}
+                    </div>
+                    <div className="text-[10px] text-stone-400">
+                      {s.items.length} item{s.items.length === 1 ? '' : 's'}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Details Bar */}
+                <div className="grid grid-cols-2 gap-2 p-2.5 rounded-xl bg-stone-50/80 dark:bg-[#25201b]/60 text-xs border border-stone-200/50 dark:border-stone-800/50">
+                  <div>
+                    <span className="text-[10px] text-stone-400 uppercase font-bold block">Cashier</span>
+                    <span className="text-stone-700 dark:text-stone-300 truncate block font-medium">
+                      {s.cashierName}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-stone-400 uppercase font-bold block">Customer</span>
+                    <span className="text-stone-700 dark:text-stone-300 truncate block font-medium">
+                      {s.customerName || 'Walk-in Customer'}
+                    </span>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-[10px] text-stone-400 uppercase font-bold block mb-1">Payment Tender</span>
+                    <div className="flex flex-wrap gap-1">
+                      {s.payments.map((p, i) => (
+                        <span
+                          key={i}
+                          className="text-[10px] px-1.5 py-0.5 rounded font-mono tabular-nums whitespace-nowrap bg-stone-200/80 dark:bg-stone-800 text-stone-700 dark:text-stone-300"
+                        >
+                          {p.method.replace('_', ' ')}: {p.amount.toFixed(2)} {settings.currency}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Action Row */}
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button
+                    onClick={() => setSelectedSale(s)}
+                    className="px-3 py-2 min-h-[44px] bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 text-stone-800 dark:text-stone-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 touch-manipulation cursor-pointer border border-stone-200 dark:border-stone-700"
+                  >
+                    <Receipt className="w-4 h-4" />
+                    <span>Inspect</span>
+                  </button>
+
+                  <button
+                    onClick={() => ExportService.generatePDFReceipt(s, settings)}
+                    className="p-2 min-h-[44px] min-w-[44px] hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-600 dark:text-stone-300 rounded-xl transition flex items-center justify-center touch-manipulation cursor-pointer border border-stone-200 dark:border-stone-700"
+                    title="Download Receipt PDF"
+                    aria-label="Download receipt PDF"
+                  >
+                    <FileDown className="w-4 h-4" />
+                  </button>
+
+                  {s.status === 'COMPLETED' && (
+                    <button
+                      onClick={() => handleInitiateRefund(s)}
+                      className="p-2 min-h-[44px] min-w-[44px] hover:bg-rose-100 dark:hover:bg-rose-950 text-rose-600 rounded-xl transition flex items-center justify-center touch-manipulation cursor-pointer border border-rose-200 dark:border-rose-900"
+                      title="Refund Sale"
+                      aria-label="Refund sale"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            {filteredSales.length === 0 && (
+              <div className="p-10 text-center text-stone-400 text-xs">
+                No sales records found matching your filters.
+              </div>
+            )}
+          </div>
+
+          {/* Desktop & Tablet View: Full Data Grid (>= 640px) */}
+          <div className="hidden sm:block overflow-x-auto">
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="bg-[#f5f1e8] dark:bg-[#25201b] border-b border-[#e6dfd5] dark:border-[#362e26] text-stone-700 dark:text-stone-300 font-bold uppercase tracking-wider">

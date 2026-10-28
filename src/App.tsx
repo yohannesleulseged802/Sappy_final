@@ -191,64 +191,76 @@ export default function App() {
     refreshAllData();
   };
 
-  // Cross-device continuous uniformity synchronization across all store collections
+  // Cross-device continuous uniformity synchronization across all store collections (10-Second Auto-Sync)
   useEffect(() => {
     let isMounted = true;
 
-    // 1. Staff accounts
+    // 1. Staff accounts live sync
     const unsubscribeStaff = storage.syncStaffWithFirestore(() => {
       if (!isMounted) return;
       refreshAllData();
     });
 
-    // 2. Product catalog
+    // 2. Product catalog live sync
     const unsubscribeProducts = storage.syncProductsWithFirestore((updatedProducts) => {
       if (!isMounted) return;
       setProducts(updatedProducts);
     });
 
-    // 3. Sales ledger & receipts
+    // 3. Sales ledger & receipts live sync
     const unsubscribeSales = storage.syncSalesWithFirestore((updatedSales) => {
       if (!isMounted) return;
       setSales(updatedSales);
     });
 
-    // 4. Customers & credit balances
+    // 4. Customers & credit balances live sync
     const unsubscribeCustomers = storage.syncCustomersWithFirestore(() => {
       if (!isMounted) return;
       refreshAllData();
     });
 
-    // 5. Credit transactions & stamps
+    // 5. Credit transactions & stamps live sync
     const unsubscribeCredit = storage.syncCreditTransactionsWithFirestore(() => {
       if (!isMounted) return;
       refreshAllData();
     });
 
-    // 6. Store expenses
+    // 6. Store expenses live sync
     const unsubscribeExpenses = storage.syncExpensesWithFirestore(() => {
       if (!isMounted) return;
       refreshAllData();
     });
 
-    // 7. Store settings
+    // 7. Store settings live sync
     const unsubscribeSettings = storage.syncSettingsWithFirestore((updatedSettings) => {
       if (!isMounted) return;
       setSettings(updatedSettings);
     });
 
-    // Initial proactive upload of any existing local data to Firestore
-    storage.syncEverythingWithFirestore().catch(() => {});
+    // 8. Auto-Sync Engine: triggers full two-way synchronization every 10 seconds
+    const unsubscribeAutoSync = storage.startAutoSync(10, () => {
+      if (!isMounted) return;
+      refreshAllData();
+    });
 
-    const handleFocus = async () => {
-      if (!isMounted || !isOnline) return;
+    const handleAutoSynced = () => {
+      if (!isMounted) return;
       refreshAllData();
     };
 
+    const handleFocus = async () => {
+      if (!isMounted || !isOnline) return;
+      storage.performAutoSync().then(() => {
+        if (isMounted) refreshAllData();
+      });
+    };
+
+    window.addEventListener('sappy-auto-synced', handleAutoSynced);
     window.addEventListener('focus', handleFocus);
 
     return () => {
       isMounted = false;
+      unsubscribeAutoSync();
       unsubscribeStaff();
       unsubscribeProducts();
       unsubscribeSales();
@@ -256,6 +268,7 @@ export default function App() {
       unsubscribeCredit();
       unsubscribeExpenses();
       unsubscribeSettings();
+      window.removeEventListener('sappy-auto-synced', handleAutoSynced);
       window.removeEventListener('focus', handleFocus);
     };
   }, [isOnline, refreshAllData]);

@@ -208,8 +208,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <TrendingUp className="w-4 h-4" />
                 </div>
               </div>
-              <div className="flex items-baseline gap-1.5">
-                <span className="text-2xl sm:text-3xl font-black font-mono-numbers text-[#064e3b] dark:text-[#6ee7b7]">
+              <div className="flex items-baseline gap-1.5 whitespace-nowrap">
+                <span className="text-2xl sm:text-3xl font-black font-mono-numbers tabular-nums text-[#064e3b] dark:text-[#6ee7b7]">
                   {metrics.todayTotal.toFixed(2)}
                 </span>
                 <span className="text-xs font-bold text-stone-400">{settings.currency}</span>
@@ -241,8 +241,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <CreditCard className="w-4 h-4" />
                 </div>
               </div>
-              <div className="flex items-baseline gap-1.5">
-                <span className="text-2xl sm:text-3xl font-black font-mono-numbers text-amber-600 dark:text-amber-400">
+              <div className="flex items-baseline gap-1.5 whitespace-nowrap">
+                <span className="text-2xl sm:text-3xl font-black font-mono-numbers tabular-nums text-amber-600 dark:text-amber-400">
                   {metrics.totalPendingCredit.toFixed(2)}
                 </span>
                 <span className="text-xs font-bold text-stone-400">{settings.currency}</span>
@@ -315,7 +315,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <span>Today's Sales</span>
               <TrendingUp className="w-4 h-4 text-emerald-600" />
             </div>
-            <div className="text-xl sm:text-2xl font-black font-mono-numbers text-stone-900 dark:text-stone-100">
+            <div className="text-xl sm:text-2xl font-black font-mono-numbers tabular-nums whitespace-nowrap text-stone-900 dark:text-stone-100">
               {metrics.todayTotal.toFixed(2)}
               <span className="text-xs font-normal text-stone-400 ml-1">{settings.currency}</span>
             </div>
@@ -330,7 +330,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <span>Past 7 Days</span>
               <TrendingUp className="w-4 h-4 text-emerald-600" />
             </div>
-            <div className="text-xl sm:text-2xl font-black font-mono-numbers text-stone-900 dark:text-stone-100">
+            <div className="text-xl sm:text-2xl font-black font-mono-numbers tabular-nums whitespace-nowrap text-stone-900 dark:text-stone-100">
               {metrics.weeklyTotal.toFixed(2)}
               <span className="text-xs font-normal text-stone-400 ml-1">{settings.currency}</span>
             </div>
@@ -343,7 +343,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <span>Past 30 Days</span>
               <TrendingUp className="w-4 h-4 text-emerald-600" />
             </div>
-            <div className="text-xl sm:text-2xl font-black font-mono-numbers text-stone-900 dark:text-stone-100">
+            <div className="text-xl sm:text-2xl font-black font-mono-numbers tabular-nums whitespace-nowrap text-stone-900 dark:text-stone-100">
               {metrics.monthlyTotal.toFixed(2)}
               <span className="text-xs font-normal text-stone-400 ml-1">{settings.currency}</span>
             </div>
@@ -356,7 +356,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <span>Average Ticket</span>
               <ShoppingCart className="w-4 h-4 text-blue-600" />
             </div>
-            <div className="text-xl sm:text-2xl font-black font-mono-numbers text-stone-900 dark:text-stone-100">
+            <div className="text-xl sm:text-2xl font-black font-mono-numbers tabular-nums whitespace-nowrap text-stone-900 dark:text-stone-100">
               {metrics.avgTicket.toFixed(2)}
               <span className="text-xs font-normal text-stone-400 ml-1">{settings.currency}</span>
             </div>
@@ -439,35 +439,35 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           <div className="p-3 rounded-xl bg-white dark:bg-[#1c1815] border border-[#e6dfd5] dark:border-[#362e26]">
             <div className="text-[10px] text-stone-400 font-bold uppercase">Cash Sales</div>
-            <div className="text-base font-black font-mono-numbers text-emerald-700 dark:text-emerald-400 mt-1">
+            <div className="text-base font-black font-mono-numbers tabular-nums whitespace-nowrap text-emerald-700 dark:text-emerald-400 mt-1">
               {metrics.cashSalesTotal.toFixed(2)}
             </div>
           </div>
 
           <div className="p-3 rounded-xl bg-white dark:bg-[#1c1815] border border-[#e6dfd5] dark:border-[#362e26]">
             <div className="text-[10px] text-stone-400 font-bold uppercase">Mobile (Telebirr/CBE)</div>
-            <div className="text-base font-black font-mono-numbers text-blue-600 dark:text-blue-400 mt-1">
+            <div className="text-base font-black font-mono-numbers tabular-nums whitespace-nowrap text-blue-600 dark:text-blue-400 mt-1">
               {metrics.mobileSalesTotal.toFixed(2)}
             </div>
           </div>
 
           <div className="p-3 rounded-xl bg-white dark:bg-[#1c1815] border border-[#e6dfd5] dark:border-[#362e26]">
             <div className="text-[10px] text-stone-400 font-bold uppercase">Card Sales</div>
-            <div className="text-base font-black font-mono-numbers text-indigo-600 dark:text-indigo-400 mt-1">
+            <div className="text-base font-black font-mono-numbers tabular-nums whitespace-nowrap text-indigo-600 dark:text-indigo-400 mt-1">
               {metrics.cardSalesTotal.toFixed(2)}
             </div>
           </div>
 
           <div className="p-3 rounded-xl bg-white dark:bg-[#1c1815] border border-[#e6dfd5] dark:border-[#362e26]">
             <div className="text-[10px] text-stone-400 font-bold uppercase">Store Credit</div>
-            <div className="text-base font-black font-mono-numbers text-amber-600 dark:text-amber-400 mt-1">
+            <div className="text-base font-black font-mono-numbers tabular-nums whitespace-nowrap text-amber-600 dark:text-amber-400 mt-1">
               {metrics.creditSalesTotal.toFixed(2)}
             </div>
           </div>
 
           <div className="p-3 rounded-xl bg-white dark:bg-[#1c1815] border border-[#e6dfd5] dark:border-[#362e26]">
             <div className="text-[10px] text-stone-400 font-bold uppercase">Recorded Expenses</div>
-            <div className="text-base font-black font-mono-numbers text-rose-600 dark:text-rose-400 mt-1">
+            <div className="text-base font-black font-mono-numbers tabular-nums whitespace-nowrap text-rose-600 dark:text-rose-400 mt-1">
               {metrics.totalExpenses.toFixed(2)}
             </div>
           </div>
@@ -476,7 +476,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <div className="text-[10px] text-emerald-800 dark:text-emerald-300 font-bold uppercase">
               Gross Profit Est.
             </div>
-            <div className="text-base font-black font-mono-numbers text-emerald-800 dark:text-emerald-300 mt-1">
+            <div className="text-base font-black font-mono-numbers tabular-nums whitespace-nowrap text-emerald-800 dark:text-emerald-300 mt-1">
               {metrics.estimatedGrossProfit.toFixed(2)}
             </div>
           </div>

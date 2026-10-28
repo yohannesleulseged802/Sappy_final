@@ -572,7 +572,10 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
             <input
               ref={searchInputRef}
-              type="text"
+              type="search"
+              inputMode="search"
+              enterKeyHint="search"
+              autoComplete="off"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={(e) => {
@@ -592,7 +595,8 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
             {searchQuery && (
               <button
                 onClick={() => setSearchQuery('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-700 p-0.5 cursor-pointer"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-700 p-0.5 cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center touch-manipulation"
+                aria-label="Clear search"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -930,8 +934,8 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
               <span className="font-extrabold text-xs sm:text-sm text-stone-900 dark:text-stone-100 uppercase tracking-tight">
                 Grand Total
               </span>
-              <div className="text-right">
-                <span className="font-black text-xl sm:text-2xl font-mono-numbers text-[#064e3b] dark:text-[#6ee7b7]">
+              <div className="text-right whitespace-nowrap">
+                <span className="font-black text-xl sm:text-2xl font-mono-numbers tabular-nums text-[#064e3b] dark:text-[#6ee7b7]">
                   {grandTotal.toFixed(2)}
                 </span>
                 <span className="text-xs text-stone-500 ml-1 font-bold">{settings.currency}</span>
@@ -945,7 +949,7 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
             <button
               onClick={() => handleQuickRecordSale('cash')}
               disabled={cart.length === 0}
-              className="w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] disabled:opacity-40 text-white font-black text-xs sm:text-sm rounded-xl flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
+              className="w-full min-h-[44px] py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] disabled:opacity-40 text-white font-black text-xs sm:text-sm rounded-xl flex items-center justify-center gap-2 shadow-sm transition cursor-pointer touch-manipulation"
               title="Record sale in ledger immediately without printing any receipt"
             >
               <FileText className="w-4 h-4 text-emerald-100" />
@@ -959,7 +963,7 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
                   if (cart.length > 0) setIsHoldInputOpen(true);
                 }}
                 disabled={cart.length === 0}
-                className="py-2 px-2 bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 disabled:opacity-40 text-stone-700 dark:text-stone-300 font-bold text-xs rounded-xl flex items-center justify-center gap-1 transition cursor-pointer"
+                className="min-h-[44px] py-2 px-2 bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 disabled:opacity-40 text-stone-700 dark:text-stone-300 font-bold text-xs rounded-xl flex items-center justify-center gap-1 transition cursor-pointer touch-manipulation"
                 title="Park Cart (F4)"
               >
                 <BookmarkPlus className="w-3.5 h-3.5" />
@@ -970,7 +974,7 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
               <button
                 onClick={openCheckout}
                 disabled={cart.length === 0}
-                className="col-span-2 py-2 px-3 bg-[#064e3b] hover:bg-[#043b2c] active:scale-[0.99] disabled:opacity-40 text-white font-extrabold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition cursor-pointer"
+                className="col-span-2 min-h-[44px] py-2 px-3 bg-[#064e3b] hover:bg-[#043b2c] active:scale-[0.99] disabled:opacity-40 text-white font-extrabold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition cursor-pointer touch-manipulation"
               >
                 <CreditCard className="w-4 h-4" />
                 <span>PAY &amp; CHECKOUT (F8)</span>

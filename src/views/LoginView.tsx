@@ -167,8 +167,21 @@ export const LoginView: React.FC<LoginViewProps> = ({onLoginSuccess, isOnline}) 
       }
     });
 
+    // 3. Periodic 10-second auto-sync loop so any approvals or registrations from other terminals reflect automatically
+    const unsubscribeAutoSync = storage.startAutoSync(10, () => {
+      if (!isMounted) return;
+      storage.syncStaffFromBackend().then((res) => {
+        if (!isMounted) return;
+        if (res.staffList.length > 0) {
+          const activeStaff = res.staffList.filter((s) => s.active && s.approvalStatus !== 'pending');
+          setStaffList(activeStaff);
+        }
+      });
+    });
+
     return () => {
       isMounted = false;
+      unsubscribeAutoSync();
       unsubscribeFirestore();
     };
   }, []);

@@ -1,0 +1,6 @@
+{
+  "summary":  "Comprehensive Mobile UX audit and implementation plan to make Sappy Stationary POS fully mobile-ready at 375px (and 320px/414px) without modifying desktop appearance or business logic. Covers the 5 core mobile fixes: wide tables to cards below 640px, non-wrapping tabular numbers/currency with clamp scaling, 16px minimum inputs with proper mobile keyboard inputmodes and autocompletes, 44px touch targets under coarse pointer media query, and safe-area insets with bottom clearance for fixed bars.",
+  "updatedAt":  "2026-10-27T08:14:55.218576313Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

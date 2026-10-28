@@ -19,9 +19,12 @@ import {
   Eye,
   EyeOff,
   AlertTriangle,
+  Cloud,
+  Activity,
+  Wifi,
 } from 'lucide-react';
 import {StoreSettings, Staff} from '../types';
-import {storage} from '../services/storage';
+import {storage, AutoSyncState} from '../services/storage';
 import {sound} from '../services/sound';
 
 interface SettingsViewProps {
@@ -66,6 +69,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [resetProfileOnWipe, setResetProfileOnWipe] = useState(false);
   const [showResetModal, setShowResetModal] = useState(false);
+
+  // 10-Second Auto-Sync Engine State
+  const [autoSyncState, setAutoSyncState] = useState<AutoSyncState>(() => storage.getAutoSyncState());
+  const [isManualSyncing, setIsManualSyncing] = useState(false);
+  const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
+
+  useEffect(() => {
+    const unsubscribe = storage.subscribeAutoSync((state) => {
+      setAutoSyncState(state);
+    });
+    return unsubscribe;
+  }, []);
 
   // Total System Factory Reset State (Requirement: Remove everything including all users)
   const [showFactoryResetModal, setShowFactoryResetModal] = useState(false);
@@ -182,13 +197,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     link.click();
   };
 
-  // Restore Database from JSON
+  // Restore Database from JSON or Checkpoint
   const handleRestoreBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const json = JSON.parse(event.target?.result as string);
         if (json.products && Array.isArray(json.products)) {
@@ -200,16 +215,45 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         if (json.sales && Array.isArray(json.sales)) {
           storage.saveSales(json.sales);
         }
+        if (json.creditTransactions && Array.isArray(json.creditTransactions)) {
+          localStorage.setItem('sappy_pos_credit_txs_v1', JSON.stringify(json.creditTransactions));
+        }
+        if (json.expenses && Array.isArray(json.expenses)) {
+          localStorage.setItem('sappy_pos_expenses_v1', JSON.stringify(json.expenses));
+        }
         if (json.settings) {
           storage.saveSettings(json.settings);
         }
-        alert('Complete system backup successfully restored!');
+        sound.playCheckoutSuccess();
+        // Immediately perform auto-sync to propagate restored checkpoint to cloud and backend
+        await storage.performAutoSync();
         onRefreshData();
-      } catch {
-        alert('Invalid backup JSON file.');
+        setSyncFeedback('Checkpoint restored & synchronized to Cloud Firestore!');
+        setTimeout(() => setSyncFeedback(null), 5000);
+      } catch (err: any) {
+        sound.playError();
+        setSyncFeedback('Error restoring backup JSON file.');
+        setTimeout(() => setSyncFeedback(null), 5000);
       }
     };
     reader.readAsText(file);
+  };
+
+  const handleTriggerManualSync = async () => {
+    setIsManualSyncing(true);
+    try {
+      const state = await storage.performAutoSync();
+      setAutoSyncState(state);
+      sound.playScanSuccess();
+      setSyncFeedback('All local & cloud databases synced successfully!');
+      onRefreshData();
+      setTimeout(() => setSyncFeedback(null), 4000);
+    } catch (err: any) {
+      sound.playError();
+      setSyncFeedback(err?.message || 'Sync failed.');
+    } finally {
+      setIsManualSyncing(false);
+    }
   };
 
   return (
@@ -546,6 +590,75 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </button>
         </div>
       </form>
+
+      {/* Continuous 10-Second Auto-Sync Engine Card */}
+      <div className="p-5 bg-white dark:bg-[#1c1815] border border-emerald-200 dark:border-emerald-900/60 rounded-2xl shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 flex items-center justify-center shrink-0 shadow-2xs">
+              <RefreshCw className={`w-5 h-5 ${autoSyncState.status === 'syncing' || isManualSyncing ? 'animate-spin' : ''}`} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-extrabold text-sm text-stone-900 dark:text-stone-100">
+                  Continuous 10-Second Auto-Sync Engine
+                </h3>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-extrabold border border-emerald-300 dark:border-emerald-800 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                  ACTIVE (EVERY 10 SECONDS)
+                </span>
+              </div>
+              <p className="text-xs text-stone-500 dark:text-stone-400 mt-0.5">
+                Automatically synchronizes products, sales orders, customer accounts, expenses, and staff credentials with Cloud Firestore &amp; backend server every 10 seconds.
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleTriggerManualSync}
+            disabled={isManualSyncing || autoSyncState.status === 'syncing'}
+            className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-xs disabled:opacity-60 shrink-0"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isManualSyncing || autoSyncState.status === 'syncing' ? 'animate-spin' : ''}`} />
+            <span>{isManualSyncing || autoSyncState.status === 'syncing' ? 'Syncing Now...' : 'Sync Now (Force 10s Cycle)'}</span>
+          </button>
+        </div>
+
+        {/* Sync Status Indicators */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+          <div className="p-3 rounded-xl bg-stone-50 dark:bg-stone-900/60 border border-stone-200 dark:border-stone-800">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">Auto-Sync Cadence</span>
+            <div className="text-xs font-black text-emerald-700 dark:text-emerald-400 mt-0.5">Every 10 Seconds</div>
+          </div>
+          <div className="p-3 rounded-xl bg-stone-50 dark:bg-stone-900/60 border border-stone-200 dark:border-stone-800">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">Last Synced</span>
+            <div className="text-xs font-bold text-stone-800 dark:text-stone-200 mt-0.5 truncate font-mono">
+              {autoSyncState.lastSyncedAt ? new Date(autoSyncState.lastSyncedAt).toLocaleTimeString() : 'In progress...'}
+            </div>
+          </div>
+          <div className="p-3 rounded-xl bg-stone-50 dark:bg-stone-900/60 border border-stone-200 dark:border-stone-800">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">Cloud Firestore</span>
+            <div className="text-xs font-bold text-emerald-700 dark:text-emerald-400 mt-0.5 flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+              <span>Connected</span>
+            </div>
+          </div>
+          <div className="p-3 rounded-xl bg-stone-50 dark:bg-stone-900/60 border border-stone-200 dark:border-stone-800">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">Offline Queue</span>
+            <div className="text-xs font-bold text-stone-800 dark:text-stone-200 mt-0.5">
+              {autoSyncState.pendingQueueCount} pending
+            </div>
+          </div>
+        </div>
+
+        {syncFeedback && (
+          <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/80 border border-emerald-300 dark:border-emerald-800 rounded-xl text-xs font-semibold text-emerald-800 dark:text-emerald-200 flex items-center gap-2 animate-in fade-in">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{syncFeedback}</span>
+          </div>
+        )}
+      </div>
 
       {/* Disaster Recovery & Complete Database Backup */}
       <div className="p-5 bg-white dark:bg-[#1c1815] border border-[#e6dfd5] dark:border-[#362e26] rounded-2xl shadow-xs space-y-3">

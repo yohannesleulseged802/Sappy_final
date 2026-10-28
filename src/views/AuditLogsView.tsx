@@ -85,7 +85,49 @@ export const AuditLogsView: React.FC = () => {
       {/* Audit Logs Table */}
       <div className="flex-1 min-h-0 overflow-y-auto touch-scroll overscroll-contain p-3 pb-24 md:pb-3">
         <div className="bg-white dark:bg-[#1c1815] border border-[#e6dfd5] dark:border-[#362e26] rounded-2xl shadow-xs overflow-hidden">
-          <div className="overflow-x-auto">
+          {/* Mobile View: Stacked Cards (< 640px) */}
+          <div className="block sm:hidden divide-y divide-[#e6dfd5] dark:divide-[#2d251f]">
+            {filteredLogs.map((log) => (
+              <div key={`log-card-${log.id}`} className="p-3.5 space-y-2 bg-white dark:bg-[#1c1815]">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-mono font-bold text-xs text-emerald-800 dark:text-emerald-400">
+                      {log.action}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-400">
+                      {log.category}
+                    </span>
+                  </div>
+                  <span className="font-mono text-[10px] text-stone-400">
+                    {new Date(log.timestamp).toLocaleString([], {
+                      month: 'short',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: '2-digit',
+                    })}
+                  </span>
+                </div>
+
+                <div className="text-xs text-stone-800 dark:text-stone-200">
+                  {log.details}
+                </div>
+
+                <div className="text-[11px] text-stone-500 pt-1 border-t border-stone-100 dark:border-stone-800/80 flex items-center justify-between">
+                  <span>Staff: <strong>{log.staffName}</strong></span>
+                </div>
+              </div>
+            ))}
+
+            {filteredLogs.length === 0 && (
+              <div className="p-10 text-center text-stone-400 text-xs">
+                No audit events recorded for the selected filter.
+              </div>
+            )}
+          </div>
+
+          {/* Desktop & Tablet View: Full Table (>= 640px) */}
+          <div className="hidden sm:block overflow-x-auto">
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="bg-[#f5f1e8] dark:bg-[#25201b] border-b border-[#e6dfd5] dark:border-[#362e26] text-stone-700 dark:text-stone-300 font-bold uppercase tracking-wider text-[10px]">

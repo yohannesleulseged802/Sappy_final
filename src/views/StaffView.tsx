@@ -426,31 +426,31 @@ export const StaffView: React.FC<StaffViewProps> = ({
                   <button
                     type="button"
                     onClick={() => onSwitchStaff(s.id)}
-                    className="text-xs font-bold text-[#064e3b] dark:text-[#6ee7b7] hover:underline cursor-pointer"
+                    className="text-xs font-bold text-[#064e3b] dark:text-[#6ee7b7] hover:underline cursor-pointer min-h-[44px] flex items-center touch-manipulation"
                   >
                     Switch User
                   </button>
                 ) : isCurrent ? (
-                  <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400">
+                  <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400 min-h-[44px] flex items-center">
                     Active Session
                   </span>
                 ) : isPending && isAdmin ? (
                   <button
                     type="button"
                     onClick={() => handleApproveStaff(s.id)}
-                    className="text-xs font-bold text-emerald-700 dark:text-emerald-400 hover:underline cursor-pointer"
+                    className="text-xs font-bold text-emerald-700 dark:text-emerald-400 hover:underline cursor-pointer min-h-[44px] flex items-center touch-manipulation"
                   >
                     Approve Now
                   </button>
                 ) : (
-                  <span className="text-xs text-stone-400 italic">Inactive</span>
+                  <span className="text-xs text-stone-400 italic min-h-[44px] flex items-center">Inactive</span>
                 )}
 
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => handleOpenEdit(s)}
-                    className="text-xs text-stone-500 hover:text-stone-900 dark:hover:text-stone-200 cursor-pointer"
+                    className="text-xs text-stone-600 dark:text-stone-300 hover:text-stone-900 dark:hover:text-stone-100 cursor-pointer min-h-[44px] px-2 flex items-center touch-manipulation font-semibold"
                   >
                     Edit
                   </button>
@@ -458,10 +458,11 @@ export const StaffView: React.FC<StaffViewProps> = ({
                     <button
                       type="button"
                       onClick={() => handleDeleteStaff(s.id, s.name)}
-                      className="text-stone-400 hover:text-rose-600 transition p-1 cursor-pointer"
+                      className="text-stone-400 hover:text-rose-600 transition p-2 min-h-[44px] min-w-[44px] flex items-center justify-center cursor-pointer touch-manipulation"
                       title="Remove staff account"
+                      aria-label="Remove staff account"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
+                      <Trash2 className="w-4 h-4" />
                     </button>
                   )}
                 </div>

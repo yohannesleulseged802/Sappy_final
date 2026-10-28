@@ -128,7 +128,8 @@ export const MobileNav: React.FC<MobileNavProps> = ({
               </div>
               <button
                 onClick={() => setDrawerOpen(false)}
-                className="p-1.5 rounded-lg text-stone-400 hover:text-stone-900 dark:hover:text-stone-100 cursor-pointer active:scale-95"
+                className="p-2 rounded-lg text-stone-400 hover:text-stone-900 dark:hover:text-stone-100 cursor-pointer active:scale-95 min-h-[44px] min-w-[44px] flex items-center justify-center touch-manipulation"
+                aria-label="Close menu"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -145,7 +146,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
                       onSelectSection(item.id);
                       setDrawerOpen(false);
                     }}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition cursor-pointer active:scale-98 touch-manipulation ${
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition cursor-pointer active:scale-98 touch-manipulation min-h-[44px] ${
                       isActive
                         ? 'bg-[#064e3b] text-white'
                         : 'text-stone-700 dark:text-stone-300 hover:bg-[#f5f1e8] dark:hover:bg-[#25201b]'

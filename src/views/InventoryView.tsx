@@ -658,11 +658,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
           <div className="relative w-full">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
             <input
-              type="text"
+              type="search"
+              inputMode="search"
+              enterKeyHint="search"
+              autoComplete="off"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Filter by product name, SKU, or code..."
-              className="w-full bg-[#f5f1e8] dark:bg-[#25201b] border border-transparent focus:border-[#064e3b] dark:focus:border-[#6ee7b7] rounded-xl pl-9 pr-4 py-2 text-xs text-stone-900 dark:text-stone-100 placeholder-stone-400 focus:outline-hidden"
+              className="w-full bg-[#f5f1e8] dark:bg-[#25201b] border border-transparent focus:border-[#064e3b] dark:focus:border-[#6ee7b7] rounded-xl pl-9 pr-4 py-2 text-xs sm:text-xs text-stone-900 dark:text-stone-100 placeholder-stone-400 focus:outline-hidden"
             />
           </div>
         </div>
@@ -827,7 +830,193 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       {/* Inventory Products Table */}
       <div className="flex-1 min-h-0 overflow-y-auto touch-scroll overscroll-contain p-3 pb-24 md:pb-3">
         <div className="bg-white dark:bg-[#1c1815] border border-[#e6dfd5] dark:border-[#362e26] rounded-2xl shadow-xs overflow-hidden">
-          <div className="overflow-x-auto">
+          {/* Mobile View: Stacked Cards (< 640px) */}
+          <div className="block sm:hidden divide-y divide-[#e6dfd5] dark:divide-[#2d251f]">
+            {/* Mobile Selection Action Bar */}
+            <div className="p-3 bg-[#f5f1e8] dark:bg-[#25201b] flex items-center justify-between text-xs">
+              <button
+                type="button"
+                onClick={toggleSelectAllVisible}
+                className="flex items-center gap-2 font-bold text-stone-700 dark:text-stone-300 min-h-[44px] touch-manipulation cursor-pointer"
+              >
+                {isAllVisibleSelected ? (
+                  <CheckSquare className="w-5 h-5 text-[#064e3b] dark:text-[#6ee7b7]" />
+                ) : (
+                  <Square className="w-5 h-5 text-stone-400" />
+                )}
+                <span>Select All ({filteredProducts.length})</span>
+              </button>
+              {selectedProductIds.size > 0 && (
+                <span className="text-[11px] font-bold text-[#064e3b] dark:text-[#6ee7b7]">
+                  {selectedProductIds.size} selected
+                </span>
+              )}
+            </div>
+
+            {filteredProducts.map((p) => {
+              const isOutOfStock = p.currentStock <= 0 && p.category !== 'Print Services';
+              const isLowStock = p.currentStock <= p.minStockThreshold && !isOutOfStock;
+              const primaryCode = p.codes.find((c) => c.isPrimary) || p.codes[0];
+              const isSelected = selectedProductIds.has(p.id);
+
+              return (
+                <div
+                  key={`card-${p.id}`}
+                  className={`p-3.5 space-y-2.5 transition ${
+                    isSelected
+                      ? 'bg-emerald-50/70 dark:bg-[#142920]/60'
+                      : 'bg-white dark:bg-[#1c1815]'
+                  }`}
+                >
+                  {/* Top Header: Select + Name/SKU + Stock Badge */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-start gap-2.5">
+                      <button
+                        type="button"
+                        onClick={() => toggleSelectProduct(p.id)}
+                        className="mt-0.5 text-stone-400 hover:text-emerald-700 transition cursor-pointer min-h-[44px] min-w-[44px] -m-2 p-2 flex items-center justify-center touch-manipulation"
+                        aria-label={`Select ${p.name}`}
+                      >
+                        {isSelected ? (
+                          <CheckSquare className="w-5 h-5 text-[#064e3b] dark:text-[#6ee7b7]" />
+                        ) : (
+                          <Square className="w-5 h-5" />
+                        )}
+                      </button>
+                      <div>
+                        <div className="font-extrabold text-sm text-stone-900 dark:text-stone-100 leading-tight">
+                          {p.name}
+                        </div>
+                        <div className="text-[11px] text-stone-400 font-mono mt-0.5">
+                          {p.sku} {p.brand ? `• ${p.brand}` : ''}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Status Badge */}
+                    <div className="shrink-0">
+                      {isOutOfStock ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 whitespace-nowrap">
+                          <AlertTriangle className="w-3 h-3" />
+                          OUT
+                        </span>
+                      ) : isLowStock ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 whitespace-nowrap">
+                          <AlertTriangle className="w-3 h-3" />
+                          LOW: {p.currentStock}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 whitespace-nowrap">
+                          {p.category === 'Print Services' ? 'Service' : `${p.currentStock} in stock`}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Label-Value Grid */}
+                  <div className="grid grid-cols-2 gap-2 p-2.5 rounded-xl bg-stone-50/80 dark:bg-[#25201b]/60 text-xs border border-stone-200/50 dark:border-stone-800/50">
+                    <div>
+                      <span className="text-[10px] text-stone-400 uppercase font-bold block">Selling Price</span>
+                      <span className="font-mono font-bold text-[#064e3b] dark:text-[#6ee7b7] tabular-nums whitespace-nowrap">
+                        {p.sellingPrice.toFixed(2)} {settings.currency}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-stone-400 uppercase font-bold block">Cost Price</span>
+                      <span className="font-mono text-stone-600 dark:text-stone-400 tabular-nums whitespace-nowrap">
+                        {p.costPrice.toFixed(2)} {settings.currency}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-stone-400 uppercase font-bold block">Category</span>
+                      <span className="text-stone-700 dark:text-stone-300 truncate block">
+                        {p.category}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-stone-400 uppercase font-bold block">Barcode / Code</span>
+                      {primaryCode ? (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenIndividualCodeView(p, primaryCode)}
+                          className="font-mono text-[11px] font-semibold text-stone-800 dark:text-stone-200 hover:text-emerald-700 dark:hover:text-emerald-300 truncate underline decoration-dashed flex items-center gap-1 cursor-pointer"
+                        >
+                          <Barcode className="w-3 h-3 text-stone-400 shrink-0" />
+                          <span className="truncate">{primaryCode.code}</span>
+                        </button>
+                      ) : (
+                        <span className="text-stone-400 italic text-[11px]">No code</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Action Row */}
+                  <div className="flex items-center justify-between pt-1">
+                    <div className="text-[11px] text-stone-400">
+                      {p.category !== 'Print Services' && (
+                        <span>Reorder at: {p.minStockThreshold} {p.unit}</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => handleOpenIndividualCodeView(p, primaryCode)}
+                        className="p-2 min-h-[44px] min-w-[44px] hover:bg-emerald-50 dark:hover:bg-emerald-950/60 text-[#064e3b] dark:text-[#6ee7b7] rounded-xl transition cursor-pointer flex items-center justify-center touch-manipulation border border-stone-200 dark:border-stone-800"
+                        title="Barcode View & Print"
+                        aria-label="View barcode"
+                      >
+                        <Barcode className="w-4 h-4" />
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          setSelectedProductForStock(p);
+                          setStockOpQty(10);
+                          setIsStockModalOpen(true);
+                        }}
+                        className="p-2 min-h-[44px] min-w-[44px] hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-700 dark:text-stone-300 rounded-xl transition cursor-pointer flex items-center justify-center touch-manipulation border border-stone-200 dark:border-stone-800"
+                        title="Adjust Stock"
+                        aria-label="Adjust stock"
+                      >
+                        <TrendingUp className="w-4 h-4" />
+                      </button>
+
+                      <button
+                        onClick={() => handleOpenEditProduct(p)}
+                        className="p-2 min-h-[44px] min-w-[44px] hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-700 dark:text-stone-300 rounded-xl transition cursor-pointer flex items-center justify-center touch-manipulation border border-stone-200 dark:border-stone-800"
+                        title="Edit Product"
+                        aria-label="Edit product"
+                      >
+                        <Edit className="w-4 h-4" />
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          if (confirm(`Are you sure you want to delete product "${p.name}"?`)) {
+                            storage.deleteProduct(p.id);
+                            onRefreshData();
+                          }
+                        }}
+                        className="p-2 min-h-[44px] min-w-[44px] hover:bg-rose-100 dark:hover:bg-rose-950 text-rose-600 rounded-xl transition cursor-pointer flex items-center justify-center touch-manipulation border border-stone-200 dark:border-stone-800"
+                        title="Delete Product"
+                        aria-label="Delete product"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+
+            {filteredProducts.length === 0 && (
+              <div className="p-10 text-center text-stone-400 text-xs">
+                No products found. Click "Add Product" to create one.
+              </div>
+            )}
+          </div>
+
+          {/* Desktop & Tablet View: Full Data Grid (>= 640px) */}
+          <div className="hidden sm:block overflow-x-auto">
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="bg-[#f5f1e8] dark:bg-[#25201b] border-b border-[#e6dfd5] dark:border-[#362e26] text-stone-700 dark:text-stone-300 font-bold uppercase tracking-wider">
