@@ -177,11 +177,17 @@ app.get('/api/auth/system-status', (req: Request, res: Response) => {
     const uid = (u.uid || '').toLowerCase();
     const email = (u.email || '').toLowerCase();
     const username = (u.username || '').toLowerCase();
-    if (deletedIds.includes(uid) || (email && deletedIds.includes(email)) || (username && deletedIds.includes(username))) {
+    const createdMs = u.createdAt ? new Date(u.createdAt).getTime() : 0;
+    if (wipeTs > 0 && createdMs <= wipeTs) {
       return false;
     }
-    const createdMs = u.createdAt ? new Date(u.createdAt).getTime() : 0;
-    return wipeTs === 0 || createdMs > wipeTs;
+    if (deletedIds.includes(uid) || (email && deletedIds.includes(email)) || (username && deletedIds.includes(username))) {
+      if (wipeTs > 0 && createdMs > wipeTs) {
+        return true;
+      }
+      return false;
+    }
+    return true;
   });
 
   if (validUsers.length !== rawUsers.length) {
@@ -589,11 +595,21 @@ app.post('/api/auth/register', (req: Request, res: Response) => {
   }
   saveStoredUsers(existingUsers);
 
+  const currentDeleted = (meta.deletedUserIds || []).map((id) => id.toLowerCase());
+  const updatedDeleted = currentDeleted.filter(
+    (id) =>
+      id !== cleanEmail &&
+      id !== cleanUsername &&
+      id !== uid.toLowerCase() &&
+      id !== employeeId.toLowerCase()
+  );
+
   saveSystemMeta({
     ...meta,
     isInitialized: true,
     initialAdminUid: meta.initialAdminUid || (assignedRole === 'admin' ? uid : undefined),
     initializedAt: meta.initializedAt || new Date().toISOString(),
+    deletedUserIds: updatedDeleted,
   });
 
   const { passwordHash: _, ...safeProfile } = newUser;
@@ -961,27 +977,35 @@ app.post('/api/pos/sync', (req: Request, res: Response) => {
   const { users: incomingUsers, products, sales, customers, expenses, creditTxs, auditLogs, settings } = req.body || {};
 
   if (Array.isArray(incomingUsers)) {
-    // Strictly discard any users created before or at wipeTs or matching deletedUserIds
+    // Filter incoming and existing users
     const validIncoming = incomingUsers.filter((inc: any) => {
       const uid = (inc.uid || inc.id || '').toLowerCase();
       const email = (inc.email || '').toLowerCase();
       const username = (inc.username || '').toLowerCase();
-      if (deletedIds.includes(uid) || (email && deletedIds.includes(email)) || (username && deletedIds.includes(username))) {
+      const t = inc.createdAt ? new Date(inc.createdAt).getTime() : 0;
+      if (wipeTs > 0 && t <= wipeTs) {
         return false;
       }
-      const t = inc.createdAt ? new Date(inc.createdAt).getTime() : 0;
-      return wipeTs === 0 || t > wipeTs;
+      if (deletedIds.includes(uid) || (email && deletedIds.includes(email)) || (username && deletedIds.includes(username))) {
+        if (wipeTs > 0 && t > wipeTs) return true;
+        return false;
+      }
+      return true;
     });
 
     const existingUsers = loadStoredUsers().filter((u) => {
       const uid = (u.uid || '').toLowerCase();
       const email = (u.email || '').toLowerCase();
       const username = (u.username || '').toLowerCase();
-      if (deletedIds.includes(uid) || (email && deletedIds.includes(email)) || (username && deletedIds.includes(username))) {
+      const t = u.createdAt ? new Date(u.createdAt).getTime() : 0;
+      if (wipeTs > 0 && t <= wipeTs) {
         return false;
       }
-      const t = u.createdAt ? new Date(u.createdAt).getTime() : 0;
-      return wipeTs === 0 || t > wipeTs;
+      if (deletedIds.includes(uid) || (email && deletedIds.includes(email)) || (username && deletedIds.includes(username))) {
+        if (wipeTs > 0 && t > wipeTs) return true;
+        return false;
+      }
+      return true;
     });
 
     const mergedUsers = [...existingUsers];

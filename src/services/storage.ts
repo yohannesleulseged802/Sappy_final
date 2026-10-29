@@ -344,6 +344,10 @@ class StorageService {
           (email && deletedIds.includes(email)) ||
           (username && deletedIds.includes(username))
         ) {
+          if (wipeTs > 0) {
+            const t = s.createdAt ? new Date(s.createdAt).getTime() : 0;
+            if (t > wipeTs) return true;
+          }
           return false;
         }
 
@@ -380,6 +384,10 @@ class StorageService {
         (email && deletedIds.includes(email)) ||
         (username && deletedIds.includes(username))
       ) {
+        if (wipeTs > 0) {
+          const t = s.createdAt ? new Date(s.createdAt).getTime() : 0;
+          if (t > wipeTs) return true;
+        }
         return false;
       }
 
@@ -429,7 +437,7 @@ class StorageService {
     if (this.isFirestoreQuotaExceeded) return;
     try {
       const userRef = doc(db, 'users', staff.id);
-      await setDoc(
+      const pushPromise = setDoc(
         userRef,
         {
           uid: staff.id,
@@ -463,6 +471,8 @@ class StorageService {
         },
         { merge: true }
       );
+      const pushTimeout = new Promise<void>((resolve) => setTimeout(resolve, 1200));
+      await Promise.race([pushPromise, pushTimeout]);
     } catch (err) {
       if (this.handleFirestoreQuotaError(err)) return;
       console.warn('Firestore pushStaff notice (offline/retry):', err);
@@ -614,6 +624,20 @@ class StorageService {
   }
 
   addStaffAccount(newStaff: Staff) {
+    // Crucial: remove newStaff's id, email, and username from deletedUserIds tombstones so it is never discarded
+    const cleanId = (newStaff.id || '').trim().toLowerCase();
+    const cleanEmail = (newStaff.email || '').trim().toLowerCase();
+    const cleanUsername = (newStaff.username || '').trim().toLowerCase();
+    const cleanEmpId = (newStaff.employeeId || '').trim().toLowerCase();
+
+    const curDeleted = this.getDeletedUserIds();
+    const filteredDeleted = curDeleted.filter(
+      (d) => d !== cleanId && d !== cleanEmail && d !== cleanUsername && d !== cleanEmpId
+    );
+    if (filteredDeleted.length !== curDeleted.length) {
+      this.setDeletedUserIds(filteredDeleted);
+    }
+
     const list = this.getStaffList();
     const existingIndex = list.findIndex(
       (s) =>

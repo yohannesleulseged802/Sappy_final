@@ -324,21 +324,25 @@ class AuthService {
       console.warn('Backend server unavailable (static / offline mode), continuing with local store:', err);
     }
 
-    // 4. Optional Firebase Authentication Integration (non-blocking if email already exists or provider disabled)
+    // 4. Optional Firebase Authentication Integration (bounded timeout, non-blocking)
     const finalUid = serverResult?.user?.uid || generatedUid;
     const fullName = `${payload.firstName.trim()} ${payload.lastName.trim()}`;
 
     try {
-      const userCredential = await createUserWithEmailAndPassword(
+      const authPromise = createUserWithEmailAndPassword(
         auth,
         cleanEmail,
         payload.password
       );
+      const authTimeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000));
+      const userCredential = await Promise.race([authPromise, authTimeout]);
       if (userCredential?.user) {
-        await updateProfile(userCredential.user, {
+        const profilePromise = updateProfile(userCredential.user, {
           displayName: fullName,
           photoURL: payload.profilePictureUrl,
         });
+        const profileTimeout = new Promise<void>((resolve) => setTimeout(resolve, 1000));
+        await Promise.race([profilePromise, profileTimeout]).catch(() => {});
       }
     } catch (fbErr: any) {
       console.warn('Firebase Auth note (continuing with POS server & local store):', fbErr?.code || fbErr?.message);
@@ -407,45 +411,54 @@ class AuthService {
       lastLogin: isApprovedByPasscode ? new Date().toISOString() : undefined,
     };
 
-    // 7. Write to Cloud Firestore
+    // 7. Write to Cloud Firestore (with safety timeout so quota exhaustion never blocks account creation)
     try {
-      await setDoc(doc(db, 'users', finalUid), {
-        uid: finalUid,
-        id: finalUid,
-        employeeId: newStaff.employeeId,
-        firstName: newStaff.firstName,
-        lastName: newStaff.lastName,
-        fullName: newStaff.name,
-        name: newStaff.name,
-        username: newStaff.username,
-        displayName: newStaff.displayName || newStaff.name,
-        email: newStaff.email,
-        phone: newStaff.phone,
-        address: newStaff.address,
-        city: newStaff.city,
-        profilePictureUrl: newStaff.profilePictureUrl,
-        avatar: newStaff.profilePictureUrl,
-        jobTitle: newStaff.jobTitle,
-        department: newStaff.department,
-        role: newStaff.role,
-        pin: newStaff.pin,
-        password: newStaff.password,
-        accountStatus: newStaff.approvalStatus,
-        approvalStatus: newStaff.approvalStatus,
-        active: newStaff.active,
-        createdAt: newStaff.createdAt,
-        updatedAt: newStaff.updatedAt,
-        approvedAt: newStaff.approvedAt,
-        approvedBy: newStaff.approvedBy,
-      }, { merge: true });
+      const firestoreTimeout = new Promise<void>((resolve) => setTimeout(resolve, 1200));
+      const firestoreOps = (async () => {
+        try {
+          await setDoc(doc(db, 'users', finalUid), {
+            uid: finalUid,
+            id: finalUid,
+            employeeId: newStaff.employeeId,
+            firstName: newStaff.firstName,
+            lastName: newStaff.lastName,
+            fullName: newStaff.name,
+            name: newStaff.name,
+            username: newStaff.username,
+            displayName: newStaff.displayName || newStaff.name,
+            email: newStaff.email,
+            phone: newStaff.phone,
+            address: newStaff.address,
+            city: newStaff.city,
+            profilePictureUrl: newStaff.profilePictureUrl,
+            avatar: newStaff.profilePictureUrl,
+            jobTitle: newStaff.jobTitle,
+            department: newStaff.department,
+            role: newStaff.role,
+            pin: newStaff.pin,
+            password: newStaff.password,
+            accountStatus: newStaff.approvalStatus,
+            approvalStatus: newStaff.approvalStatus,
+            active: newStaff.active,
+            createdAt: newStaff.createdAt,
+            updatedAt: newStaff.updatedAt,
+            approvedAt: newStaff.approvedAt,
+            approvedBy: newStaff.approvedBy,
+          }, { merge: true });
 
-      if (isApprovedByPasscode) {
-        await setDoc(doc(db, 'system', 'setup'), {
-          isInitialized: true,
-          initializedAt: new Date().toISOString(),
-          initialAdminUid: finalUid,
-        });
-      }
+          if (isApprovedByPasscode) {
+            await setDoc(doc(db, 'system', 'setup'), {
+              isInitialized: true,
+              initializedAt: new Date().toISOString(),
+              initialAdminUid: finalUid,
+            });
+          }
+        } catch (fsErr) {
+          console.warn('Firestore write notice (continuing with offline-first persistence):', fsErr);
+        }
+      })();
+
+      await Promise.race([firestoreOps, firestoreTimeout]);
     } catch (fsErr) {
       console.warn('Firestore write notice (continuing with offline-first persistence):', fsErr);
     }
@@ -510,9 +523,9 @@ class AuthService {
         storage.setCurrentStaff(staffId);
       }
 
-      // 2. Update Firestore if accessible
+      // 2. Update Firestore if accessible (bounded timeout)
       try {
-        await setDoc(
+        const updatePromise = setDoc(
           doc(db, 'users', staffId),
           {
             fullName: updatedStaff.name,
@@ -529,6 +542,8 @@ class AuthService {
           },
           { merge: true }
         );
+        const updateTimeout = new Promise<void>((resolve) => setTimeout(resolve, 1200));
+        await Promise.race([updatePromise, updateTimeout]);
       } catch (err) {
         console.warn('Firestore profile update notice:', err);
       }
