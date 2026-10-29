@@ -501,8 +501,6 @@ class StorageService {
       }).catch(() => {});
     } catch {}
   }
-    } catch {}
-  }
 
   addStaffAccount(newStaff: Staff) {
     const list = this.getStaffList();

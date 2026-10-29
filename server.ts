@@ -1056,7 +1056,6 @@ app.post('/api/pos/sync', (req: Request, res: Response) => {
     serverTimestamp: new Date().toISOString(),
   });
 });
-});
 
 // Products CRUD
 app.get('/api/products', (req: Request, res: Response) => {
