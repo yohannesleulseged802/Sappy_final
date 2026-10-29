@@ -116,7 +116,11 @@ export const LoginView: React.FC<LoginViewProps> = ({onLoginSuccess, isOnline}) 
     }
   };
 
-  const [activeAuthTab, setActiveAuthTab] = useState<'signin' | 'signup'>('signin');
+  const [activeAuthTab, setActiveAuthTab] = useState<'signin' | 'signup'>(() => {
+    return storage.getStaffList().filter((s) => s.active && s.approvalStatus !== 'pending').length === 0
+      ? 'signup'
+      : 'signin';
+  });
 
   // Inline Signup Form State (Requirement: standard login/Signup page)
   const [signupPasscode, setSignupPasscode] = useState('');
@@ -178,8 +182,8 @@ export const LoginView: React.FC<LoginViewProps> = ({onLoginSuccess, isOnline}) 
       }
     });
 
-    // 3. Periodic 10-second auto-sync loop so any approvals or registrations from other terminals reflect automatically
-    const unsubscribeAutoSync = storage.startAutoSync(10, () => {
+    // 3. Periodic 10-second auto-sync updates so any approvals or registrations from other terminals reflect automatically
+    const unsubscribeAutoSync = storage.subscribeAutoSync(() => {
       if (!isMounted) return;
       storage.syncStaffFromBackend().then((res) => {
         if (!isMounted) return;
@@ -195,6 +199,18 @@ export const LoginView: React.FC<LoginViewProps> = ({onLoginSuccess, isOnline}) 
       });
     });
 
+    const handleAutoSynced = () => {
+      if (!isMounted) return;
+      const currentList = storage.getStaffList().filter((s) => s.active && s.approvalStatus !== 'pending');
+      setStaffList(currentList);
+      if (currentList.length === 0) {
+        setSelectedStaffId('');
+        setUsername('');
+        setActiveAuthTab('signup');
+      }
+    };
+    window.addEventListener('sappy-auto-synced', handleAutoSynced);
+
     // 4. Cross-device wipe listener
     const handleWipe = () => {
       if (!isMounted) return;
@@ -209,6 +225,7 @@ export const LoginView: React.FC<LoginViewProps> = ({onLoginSuccess, isOnline}) 
       isMounted = false;
       unsubscribeAutoSync();
       unsubscribeFirestore();
+      window.removeEventListener('sappy-auto-synced', handleAutoSynced);
       window.removeEventListener('sappy-cross-device-wipe', handleWipe);
     };
   }, []);

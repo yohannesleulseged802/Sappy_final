@@ -90,6 +90,7 @@ interface SystemMeta {
   lastWipeTimestamp?: number;
   lastCatalogWipeTimestamp?: number;
   wipeType?: string;
+  deletedUserIds?: string[];
 }
 
 const SERVER_STORE_DIR = path.join(__dirname, '.server_data');
@@ -124,12 +125,16 @@ function saveStoredUsers(users: StoredUser[]) {
 function loadSystemMeta(): SystemMeta {
   try {
     if (fs.existsSync(SYSTEM_META_FILE)) {
-      return JSON.parse(fs.readFileSync(SYSTEM_META_FILE, 'utf-8'));
+      const parsed = JSON.parse(fs.readFileSync(SYSTEM_META_FILE, 'utf-8'));
+      return {
+        ...parsed,
+        deletedUserIds: Array.isArray(parsed.deletedUserIds) ? parsed.deletedUserIds : [],
+      };
     }
   } catch (err) {
     console.error('Failed to read system meta:', err);
   }
-  return { isInitialized: false };
+  return { isInitialized: false, deletedUserIds: [] };
 }
 
 function saveSystemMeta(meta: SystemMeta) {
@@ -165,14 +170,19 @@ app.get('/api/auth/system-status', (req: Request, res: Response) => {
   const meta = loadSystemMeta();
   const rawUsers = loadStoredUsers();
   const wipeTs = Number(meta.lastWipeTimestamp || 0);
+  const deletedIds = (meta.deletedUserIds || []).map((id) => id.toLowerCase());
 
-  // Strict tombstone watermark: filter out any resurrected users created before or at wipe timestamp
-  const validUsers = wipeTs > 0
-    ? rawUsers.filter((u) => {
-        const createdMs = u.createdAt ? new Date(u.createdAt).getTime() : 0;
-        return createdMs > wipeTs;
-      })
-    : rawUsers;
+  // Strict tombstone watermark: filter out any resurrected users created before or at wipe timestamp or in deleted list
+  const validUsers = rawUsers.filter((u) => {
+    const uid = (u.uid || '').toLowerCase();
+    const email = (u.email || '').toLowerCase();
+    const username = (u.username || '').toLowerCase();
+    if (deletedIds.includes(uid) || (email && deletedIds.includes(email)) || (username && deletedIds.includes(username))) {
+      return false;
+    }
+    const createdMs = u.createdAt ? new Date(u.createdAt).getTime() : 0;
+    return wipeTs === 0 || createdMs > wipeTs;
+  });
 
   if (validUsers.length !== rawUsers.length) {
     saveStoredUsers(validUsers);
@@ -190,20 +200,39 @@ app.get('/api/auth/system-status', (req: Request, res: Response) => {
     activeAccounts: approvedUsers.length,
     lastWipeTimestamp: wipeTs,
     lastCatalogWipeTimestamp: Number(meta.lastCatalogWipeTimestamp || wipeTs),
+    deletedUserIds: meta.deletedUserIds || [],
   });
 });
 
 app.post('/api/auth/reset-all-users', (req: Request, res: Response) => {
   const now = Date.now();
+  const currentUsers = loadStoredUsers();
+  const currentMeta = loadSystemMeta();
+  const deletedIds = Array.from(
+    new Set([
+      ...(currentMeta.deletedUserIds || []),
+      ...currentUsers.map((u) => u.uid),
+      ...currentUsers.map((u) => (u.email || '').toLowerCase()).filter(Boolean),
+      ...currentUsers.map((u) => (u.username || '').toLowerCase()).filter(Boolean),
+    ])
+  );
+
   // Wipe all stored user accounts and security records (Requirement #1)
   saveStoredUsers([]);
-  saveSystemMeta({ isInitialized: false, lastWipeTimestamp: now });
+  saveSystemMeta({
+    isInitialized: false,
+    lastWipeTimestamp: now,
+    lastCatalogWipeTimestamp: currentMeta.lastCatalogWipeTimestamp || now,
+    wipeType: 'staff_only',
+    deletedUserIds: deletedIds,
+  });
   activeSignupSessions.clear();
   ipAttempts.clear();
 
   res.json({
     success: true,
     lastWipeTimestamp: now,
+    deletedUserIds: deletedIds,
     message: 'All staff accounts, authentication credentials, and sessions successfully cleared. Business catalog and records intact.',
   });
 });
@@ -712,6 +741,18 @@ app.post('/api/auth/approve', (req: Request, res: Response) => {
   } else if (action === 'delete') {
     const filtered = users.filter((u) => u.uid !== staffId && u.employeeId !== staffId);
     saveStoredUsers(filtered);
+    const meta = loadSystemMeta();
+    const deleted = meta.deletedUserIds || [];
+    const toAdd = [
+      target.uid,
+      target.employeeId,
+      target.email?.toLowerCase(),
+      target.username?.toLowerCase(),
+    ].filter(Boolean) as string[];
+    saveSystemMeta({
+      ...meta,
+      deletedUserIds: Array.from(new Set([...deleted, ...toAdd])),
+    });
     return res.json({ success: true, message: 'User deleted.' });
   }
 
@@ -897,6 +938,7 @@ app.get('/api/pos/all-data', (req: Request, res: Response) => {
     isInitialized,
     lastWipeTimestamp: wipeTs,
     lastCatalogWipeTimestamp: catalogWipeTs,
+    deletedUserIds: meta.deletedUserIds || [],
     users,
     products,
     sales,
@@ -914,19 +956,30 @@ app.post('/api/pos/sync', (req: Request, res: Response) => {
   const meta = loadSystemMeta();
   const wipeTs = Number(meta.lastWipeTimestamp || 0);
   const catalogWipeTs = Number(meta.lastCatalogWipeTimestamp || wipeTs);
+  const deletedIds = (meta.deletedUserIds || []).map((id) => id.toLowerCase());
 
   const { users: incomingUsers, products, sales, customers, expenses, creditTxs, auditLogs, settings } = req.body || {};
 
   if (Array.isArray(incomingUsers)) {
-    // Strictly discard any users created before or at wipeTs
-    const validIncoming = wipeTs > 0
-      ? incomingUsers.filter((inc: any) => {
-          const t = inc.createdAt ? new Date(inc.createdAt).getTime() : 0;
-          return t > wipeTs;
-        })
-      : incomingUsers;
+    // Strictly discard any users created before or at wipeTs or matching deletedUserIds
+    const validIncoming = incomingUsers.filter((inc: any) => {
+      const uid = (inc.uid || inc.id || '').toLowerCase();
+      const email = (inc.email || '').toLowerCase();
+      const username = (inc.username || '').toLowerCase();
+      if (deletedIds.includes(uid) || (email && deletedIds.includes(email)) || (username && deletedIds.includes(username))) {
+        return false;
+      }
+      const t = inc.createdAt ? new Date(inc.createdAt).getTime() : 0;
+      return wipeTs === 0 || t > wipeTs;
+    });
 
     const existingUsers = loadStoredUsers().filter((u) => {
+      const uid = (u.uid || '').toLowerCase();
+      const email = (u.email || '').toLowerCase();
+      const username = (u.username || '').toLowerCase();
+      if (deletedIds.includes(uid) || (email && deletedIds.includes(email)) || (username && deletedIds.includes(username))) {
+        return false;
+      }
       const t = u.createdAt ? new Date(u.createdAt).getTime() : 0;
       return wipeTs === 0 || t > wipeTs;
     });
@@ -1328,6 +1381,16 @@ app.post('/api/system/wipe-everything', (req: Request, res: Response) => {
   }
 
   const now = Date.now();
+  const currentUsers = loadStoredUsers();
+  const currentMeta = loadSystemMeta();
+  const deletedIds = Array.from(
+    new Set([
+      ...(currentMeta.deletedUserIds || []),
+      ...currentUsers.map((u) => u.uid),
+      ...currentUsers.map((u) => (u.email || '').toLowerCase()).filter(Boolean),
+      ...currentUsers.map((u) => (u.username || '').toLowerCase()).filter(Boolean),
+    ])
+  );
 
   // 1. Wipe all staff accounts and users
   saveStoredUsers([]);
@@ -1354,7 +1417,13 @@ app.post('/api/system/wipe-everything', (req: Request, res: Response) => {
   saveStoredSettings(DEFAULT_SETTINGS);
 
   // 9. Reset system initialization metadata with explicit wipe timestamp
-  saveSystemMeta({ isInitialized: false, lastWipeTimestamp: now, lastCatalogWipeTimestamp: now });
+  saveSystemMeta({
+    isInitialized: false,
+    lastWipeTimestamp: now,
+    lastCatalogWipeTimestamp: now,
+    wipeType: 'full',
+    deletedUserIds: deletedIds,
+  });
 
   // 10. Clear in-memory tokens and rate limits
   activeSignupSessions.clear();
@@ -1364,6 +1433,7 @@ app.post('/api/system/wipe-everything', (req: Request, res: Response) => {
     success: true,
     isInitialized: false,
     lastWipeTimestamp: now,
+    deletedUserIds: deletedIds,
     wipeType: 'full',
     message: 'System factory reset successful. All users, products, sales, customers, and data have been wiped clean across all devices.',
   });
