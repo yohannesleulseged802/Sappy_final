@@ -162,28 +162,34 @@ function getClientIp(req: Request): string {
 // -----------------------------------------------------------------------------
 
 app.get('/api/auth/system-status', (req: Request, res: Response) => {
-  const users = loadStoredUsers();
   const meta = loadSystemMeta();
-  const approvedUsers = users.filter((u) => u.accountStatus === 'approved' && u.active);
-  const activeAdmins = approvedUsers.filter((u) => u.role === 'admin');
-  const isInitialized = users.length > 0 || activeAdmins.length > 0 || meta.isInitialized;
+  const rawUsers = loadStoredUsers();
+  const wipeTs = Number(meta.lastWipeTimestamp || 0);
 
-  if (users.length > 0 && (!meta.isInitialized || meta.lastWipeTimestamp)) {
-    saveSystemMeta({
-      ...meta,
-      isInitialized: true,
-      lastWipeTimestamp: 0,
-      initialAdminUid: activeAdmins[0]?.uid || users[0]?.uid,
-    });
+  // Strict tombstone watermark: filter out any resurrected users created before or at wipe timestamp
+  const validUsers = wipeTs > 0
+    ? rawUsers.filter((u) => {
+        const createdMs = u.createdAt ? new Date(u.createdAt).getTime() : 0;
+        return createdMs > wipeTs;
+      })
+    : rawUsers;
+
+  if (validUsers.length !== rawUsers.length) {
+    saveStoredUsers(validUsers);
   }
+
+  const approvedUsers = validUsers.filter((u) => u.accountStatus === 'approved' && u.active);
+  const activeAdmins = approvedUsers.filter((u) => u.role === 'admin');
+  const isInitialized = meta.isInitialized === true && validUsers.length > 0;
 
   res.json({
     success: true,
     isInitialized,
-    totalUsers: users.length,
+    totalUsers: validUsers.length,
     hasAdmin: activeAdmins.length > 0,
-    activeAccounts: users.filter((u) => u.active).length,
-    lastWipeTimestamp: users.length > 0 ? 0 : (meta.lastWipeTimestamp || 0),
+    activeAccounts: approvedUsers.length,
+    lastWipeTimestamp: wipeTs,
+    lastCatalogWipeTimestamp: Number(meta.lastCatalogWipeTimestamp || wipeTs),
   });
 });
 
@@ -541,7 +547,7 @@ app.post('/api/auth/register', (req: Request, res: Response) => {
     pin: cleanPin,
     password,
     passwordHash: hashPassword(password),
-    createdAt: existingRecord?.createdAt || new Date().toISOString(),
+    createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     approvedAt: hasMasterPasscodeAuth ? new Date().toISOString() : undefined,
     approvedBy: hasMasterPasscodeAuth ? 'MASTER_PASSCODE' : undefined,
@@ -557,7 +563,6 @@ app.post('/api/auth/register', (req: Request, res: Response) => {
   saveSystemMeta({
     ...meta,
     isInitialized: true,
-    lastWipeTimestamp: 0,
     initialAdminUid: meta.initialAdminUid || (assignedRole === 'admin' ? uid : undefined),
     initializedAt: meta.initializedAt || new Date().toISOString(),
   });
@@ -847,25 +852,51 @@ app.post('/api/settings', (req: Request, res: Response) => {
 
 // Full state endpoint for cross-device consistency
 app.get('/api/pos/all-data', (req: Request, res: Response) => {
-  const rawUsers = loadStoredUsers();
-  const users = rawUsers.map(({ passwordHash: _, ...safe }) => safe);
   const meta = loadSystemMeta();
-  const products = loadStoredProducts();
-  const sales = loadStoredSales();
-  const customers = loadStoredCustomers();
-  const expenses = loadStoredExpenses();
-  const creditTxs = loadStoredCreditTxs();
+  const wipeTs = Number(meta.lastWipeTimestamp || 0);
+  const catalogWipeTs = Number(meta.lastCatalogWipeTimestamp || wipeTs);
+
+  const rawUsers = loadStoredUsers();
+  const validUsers = wipeTs > 0
+    ? rawUsers.filter((u) => (u.createdAt ? new Date(u.createdAt).getTime() : 0) > wipeTs)
+    : rawUsers;
+  const users = validUsers.map(({ passwordHash: _, ...safe }) => safe);
+
+  const rawProducts = loadStoredProducts();
+  const products = catalogWipeTs > 0
+    ? rawProducts.filter((p: any) => Math.max(p.updatedDate ? new Date(p.updatedDate).getTime() : 0, p.createdDate ? new Date(p.createdDate).getTime() : 0) > catalogWipeTs)
+    : rawProducts;
+
+  const rawSales = loadStoredSales();
+  const sales = catalogWipeTs > 0
+    ? rawSales.filter((s: any) => (s.date ? new Date(s.date).getTime() : 0) > catalogWipeTs)
+    : rawSales;
+
+  const rawCustomers = loadStoredCustomers();
+  const customers = catalogWipeTs > 0
+    ? rawCustomers.filter((c: any) => (c.createdAt ? new Date(c.createdAt).getTime() : 0) > catalogWipeTs)
+    : rawCustomers;
+
+  const rawExpenses = loadStoredExpenses();
+  const expenses = catalogWipeTs > 0
+    ? rawExpenses.filter((e: any) => (e.timestamp ? new Date(e.timestamp).getTime() : 0) > catalogWipeTs)
+    : rawExpenses;
+
+  const rawCreditTxs = loadStoredCreditTxs();
+  const creditTxs = catalogWipeTs > 0
+    ? rawCreditTxs.filter((t: any) => (t.timestamp ? new Date(t.timestamp).getTime() : 0) > catalogWipeTs)
+    : rawCreditTxs;
+
   const auditLogs = loadStoredAuditLogs();
   const settings = loadStoredSettings();
 
-  const isInitialized =
-    users.length > 0 ||
-    meta.isInitialized;
+  const isInitialized = meta.isInitialized === true && users.length > 0;
 
   res.json({
     success: true,
     isInitialized,
-    lastWipeTimestamp: meta.lastWipeTimestamp || 0,
+    lastWipeTimestamp: wipeTs,
+    lastCatalogWipeTimestamp: catalogWipeTs,
     users,
     products,
     sales,
@@ -880,13 +911,29 @@ app.get('/api/pos/all-data', (req: Request, res: Response) => {
 
 // Synchronize state across devices
 app.post('/api/pos/sync', (req: Request, res: Response) => {
+  const meta = loadSystemMeta();
+  const wipeTs = Number(meta.lastWipeTimestamp || 0);
+  const catalogWipeTs = Number(meta.lastCatalogWipeTimestamp || wipeTs);
+
   const { users: incomingUsers, products, sales, customers, expenses, creditTxs, auditLogs, settings } = req.body || {};
 
-  if (Array.isArray(incomingUsers) && incomingUsers.length > 0) {
-    const existingUsers = loadStoredUsers();
+  if (Array.isArray(incomingUsers)) {
+    // Strictly discard any users created before or at wipeTs
+    const validIncoming = wipeTs > 0
+      ? incomingUsers.filter((inc: any) => {
+          const t = inc.createdAt ? new Date(inc.createdAt).getTime() : 0;
+          return t > wipeTs;
+        })
+      : incomingUsers;
+
+    const existingUsers = loadStoredUsers().filter((u) => {
+      const t = u.createdAt ? new Date(u.createdAt).getTime() : 0;
+      return wipeTs === 0 || t > wipeTs;
+    });
+
     const mergedUsers = [...existingUsers];
 
-    incomingUsers.forEach((inc: any) => {
+    validIncoming.forEach((inc: any) => {
       const uid = inc.uid || inc.id;
       if (!uid) return;
       const email = (inc.email || '').trim().toLowerCase();
@@ -952,31 +999,63 @@ app.post('/api/pos/sync', (req: Request, res: Response) => {
     });
 
     saveStoredUsers(mergedUsers);
-    const meta = loadSystemMeta();
-    if (mergedUsers.length > 0 && (!meta.isInitialized || meta.lastWipeTimestamp)) {
+    if (mergedUsers.length > 0 && !meta.isInitialized) {
       saveSystemMeta({
         ...meta,
         isInitialized: true,
-        lastWipeTimestamp: 0,
         initialAdminUid: meta.initialAdminUid || mergedUsers[0].uid,
         initializedAt: meta.initializedAt || new Date().toISOString(),
       });
     }
   }
 
-  if (Array.isArray(products)) saveStoredProducts(products);
-  if (Array.isArray(sales)) saveStoredSales(sales);
-  if (Array.isArray(customers)) saveStoredCustomers(customers);
-  if (Array.isArray(expenses)) saveStoredExpenses(expenses);
-  if (Array.isArray(creditTxs)) saveStoredCreditTxs(creditTxs);
+  // Filter products, sales, customers, expenses, creditTxs by catalogWipeTs
+  if (Array.isArray(products)) {
+    const validProds = catalogWipeTs > 0
+      ? products.filter((p: any) => Math.max(p.updatedDate ? new Date(p.updatedDate).getTime() : 0, p.createdDate ? new Date(p.createdDate).getTime() : 0) > catalogWipeTs)
+      : products;
+    saveStoredProducts(validProds);
+  }
+
+  if (Array.isArray(sales)) {
+    const validSales = catalogWipeTs > 0
+      ? sales.filter((s: any) => (s.date ? new Date(s.date).getTime() : 0) > catalogWipeTs)
+      : sales;
+    saveStoredSales(validSales);
+  }
+
+  if (Array.isArray(customers)) {
+    const validCust = catalogWipeTs > 0
+      ? customers.filter((c: any) => (c.createdAt ? new Date(c.createdAt).getTime() : 0) > catalogWipeTs)
+      : customers;
+    saveStoredCustomers(validCust);
+  }
+
+  if (Array.isArray(expenses)) {
+    const validExp = catalogWipeTs > 0
+      ? expenses.filter((e: any) => (e.timestamp ? new Date(e.timestamp).getTime() : 0) > catalogWipeTs)
+      : expenses;
+    saveStoredExpenses(validExp);
+  }
+
+  if (Array.isArray(creditTxs)) {
+    const validCredit = catalogWipeTs > 0
+      ? creditTxs.filter((t: any) => (t.timestamp ? new Date(t.timestamp).getTime() : 0) > catalogWipeTs)
+      : creditTxs;
+    saveStoredCreditTxs(validCredit);
+  }
+
   if (Array.isArray(auditLogs)) saveStoredAuditLogs(auditLogs);
   if (settings && typeof settings === 'object') saveStoredSettings(settings);
 
   res.json({
     success: true,
+    lastWipeTimestamp: wipeTs,
+    lastCatalogWipeTimestamp: catalogWipeTs,
     message: 'Data synchronized uniformly across devices.',
     serverTimestamp: new Date().toISOString(),
   });
+});
 });
 
 // Products CRUD
@@ -1276,7 +1355,7 @@ app.post('/api/system/wipe-everything', (req: Request, res: Response) => {
   saveStoredSettings(DEFAULT_SETTINGS);
 
   // 9. Reset system initialization metadata with explicit wipe timestamp
-  saveSystemMeta({ isInitialized: false, lastWipeTimestamp: now });
+  saveSystemMeta({ isInitialized: false, lastWipeTimestamp: now, lastCatalogWipeTimestamp: now });
 
   // 10. Clear in-memory tokens and rate limits
   activeSignupSessions.clear();

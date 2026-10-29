@@ -275,12 +275,36 @@ class StorageService {
     } catch {}
   }
 
+  getWipeTimestamp(): number {
+    if (!this.isBrowser()) return 0;
+    return Number(localStorage.getItem('sappy_last_known_wipe_ts') || 0);
+  }
+
+  getCatalogWipeTimestamp(): number {
+    if (!this.isBrowser()) return 0;
+    const cat = Number(localStorage.getItem('sappy_last_catalog_wipe_ts') || 0);
+    const wipe = this.getWipeTimestamp();
+    return Math.max(cat, wipe);
+  }
+
   // --- Staff & Current User ---
   getStaffList(): Staff[] {
     if (!this.isBrowser()) return INITIAL_STAFF;
     try {
       const val = localStorage.getItem(STORAGE_KEYS.STAFF);
-      return val ? JSON.parse(val) : INITIAL_STAFF;
+      const list: Staff[] = val ? JSON.parse(val) : INITIAL_STAFF;
+      const wipeTs = this.getWipeTimestamp();
+      if (wipeTs > 0) {
+        const filtered = list.filter((s) => {
+          const t = s.createdAt ? new Date(s.createdAt).getTime() : 0;
+          return t > wipeTs;
+        });
+        if (filtered.length !== list.length) {
+          localStorage.setItem(STORAGE_KEYS.STAFF, JSON.stringify(filtered));
+        }
+        return filtered;
+      }
+      return list;
     } catch {
       return INITIAL_STAFF;
     }
@@ -288,7 +312,11 @@ class StorageService {
 
   saveStaffList(staff: Staff[]) {
     if (!this.isBrowser()) return;
-    localStorage.setItem(STORAGE_KEYS.STAFF, JSON.stringify(staff));
+    const wipeTs = this.getWipeTimestamp();
+    const valid = wipeTs > 0
+      ? staff.filter((s) => (s.createdAt ? new Date(s.createdAt).getTime() : 0) > wipeTs)
+      : staff;
+    localStorage.setItem(STORAGE_KEYS.STAFF, JSON.stringify(valid));
   }
 
   // --- Firebase Cloud Database Cross-Device Synchronization ---
@@ -414,24 +442,31 @@ class StorageService {
   syncStaffWithFirestore(onUpdate?: (staffList: Staff[]) => void): () => void {
     if (!this.isBrowser()) return () => {};
 
+    const handleDocs = (snapDocs: any[]) => {
+      const wipeTs = this.getWipeTimestamp();
+      const remoteStaff: Staff[] = [];
+      snapDocs.forEach((docSnap) => {
+        const s = this.mapFirestoreDocToStaff(docSnap.id, docSnap.data());
+        const t = s.createdAt ? new Date(s.createdAt).getTime() : 0;
+        if (wipeTs === 0 || t > wipeTs) {
+          remoteStaff.push(s);
+        }
+      });
+
+      if (remoteStaff.length > 0) {
+        this.mergeRemoteStaff(remoteStaff, onUpdate);
+      } else {
+        if (wipeTs > 0) {
+          this.saveStaffList([]);
+          if (onUpdate) onUpdate([]);
+        }
+      }
+    };
+
     // 1. Immediate fetch on mount
     getDocs(collection(db, 'users'))
       .then((snap) => {
-        const remoteStaff: Staff[] = [];
-        snap.forEach((docSnap) => {
-          remoteStaff.push(this.mapFirestoreDocToStaff(docSnap.id, docSnap.data()));
-        });
-
-        if (remoteStaff.length > 0) {
-          this.mergeRemoteStaff(remoteStaff, onUpdate);
-        } else {
-          // If Firestore is empty, respect the reset state and clear local staff
-          const wipeTs = Number(localStorage.getItem('sappy_last_known_wipe_ts') || 0);
-          if (wipeTs > 0) {
-            this.saveStaffList([]);
-            if (onUpdate) onUpdate([]);
-          }
-        }
+        handleDocs(snap.docs);
       })
       .catch((err) => {
         console.warn('Initial Firestore staff sync notice:', err);
@@ -441,18 +476,7 @@ class StorageService {
     const unsubscribe = onSnapshot(
       collection(db, 'users'),
       (snap) => {
-        const remoteStaff: Staff[] = [];
-        snap.forEach((docSnap) => {
-          remoteStaff.push(this.mapFirestoreDocToStaff(docSnap.id, docSnap.data()));
-        });
-
-        if (remoteStaff.length > 0) {
-          this.mergeRemoteStaff(remoteStaff, onUpdate);
-        } else {
-          // If Firestore was wiped or emptied remotely, clear local staff across all devices
-          this.saveStaffList([]);
-          if (onUpdate) onUpdate([]);
-        }
+        handleDocs(snap.docs);
       },
       (err) => {
         console.warn('Firestore real-time staff sync notice:', err);
@@ -464,12 +488,19 @@ class StorageService {
 
   private pushStaffToServer(staffList: Staff[]) {
     if (!this.isBrowser()) return;
+    const wipeTs = this.getWipeTimestamp();
+    const valid = wipeTs > 0
+      ? staffList.filter((s) => (s.createdAt ? new Date(s.createdAt).getTime() : 0) > wipeTs)
+      : staffList;
+    if (valid.length === 0 && staffList.length > 0) return;
     try {
       fetch('/api/pos/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ users: staffList }),
+        body: JSON.stringify({ users: valid }),
       }).catch(() => {});
+    } catch {}
+  }
     } catch {}
   }
 
@@ -1188,9 +1219,14 @@ class StorageService {
     });
 
     // Also preserve any local accounts that haven't synced to the server yet
+    const wipeTs = this.getWipeTimestamp();
     const merged: Staff[] = [...mappedUsers];
     let hasUnsyncedLocal = false;
     localList.forEach((loc) => {
+      const createdMs = loc.createdAt ? new Date(loc.createdAt).getTime() : 0;
+      if (wipeTs > 0 && createdMs <= wipeTs) {
+        return; // Discard stale pre-wipe accounts
+      }
       const existsInMapped = merged.some(
         (m) =>
           m.id === loc.id ||
@@ -1223,25 +1259,22 @@ class StorageService {
 
       const localList = this.getStaffList();
       const serverWipeTs = Number(statusRes?.lastWipeTimestamp || 0);
-      const localKnownWipeTs = Number(localStorage.getItem('sappy_last_known_wipe_ts') || 0);
+      const localKnownWipeTs = this.getWipeTimestamp();
 
-      // Only wipe local users if an explicit server-side reset happened more recently than our known timestamp
-      // AND more recently than the newest local user creation
       if (serverWipeTs > 0 && serverWipeTs > localKnownWipeTs) {
         localStorage.setItem('sappy_last_known_wipe_ts', String(serverWipeTs));
-        const newestUserCreatedMs = localList.reduce((max, u) => {
-          const t = u.createdAt ? new Date(u.createdAt).getTime() : 0;
-          return t > max ? t : max;
-        }, 0);
+      }
 
-        if (newestUserCreatedMs < serverWipeTs && (!usersRes?.users || usersRes.users.length === 0)) {
-          localStorage.removeItem(STORAGE_KEYS.STORE_INITIALIZED);
-          localStorage.removeItem('sappy_initial_signup_completed');
-          this.saveStaffList([]);
-          this.setAuthenticated(false);
-          this.setRegisterLocked(false);
-          return { hasAdmin: false, isInitialized: false, staffList: [] };
-        }
+      const activeWipeTs = Math.max(serverWipeTs, localKnownWipeTs);
+
+      // If an authoritative wipe occurred and server has no users, purge local storage immediately
+      if (activeWipeTs > 0 && (!usersRes?.users || usersRes.users.length === 0)) {
+        localStorage.removeItem(STORAGE_KEYS.STORE_INITIALIZED);
+        localStorage.removeItem('sappy_initial_signup_completed');
+        this.saveStaffList([]);
+        this.setAuthenticated(false);
+        this.setRegisterLocked(false);
+        return { hasAdmin: false, isInitialized: false, staffList: [] };
       }
 
       if (usersRes?.success && Array.isArray(usersRes.users) && usersRes.users.length > 0) {
@@ -1252,8 +1285,8 @@ class StorageService {
         return { hasAdmin, isInitialized: true, staffList: merged };
       }
 
-      // If server has no users (e.g. fresh container start) but local browser has users, push local users to server!
-      if (localList.length > 0) {
+      // If server has no users and no wipe occurred, push local users
+      if (localList.length > 0 && activeWipeTs === 0) {
         this.pushStaffToServer(localList);
         localStorage.setItem(STORAGE_KEYS.STORE_INITIALIZED, 'true');
         const hasAdmin = this.hasAdminAccount();
@@ -1264,7 +1297,7 @@ class StorageService {
     } catch {
       const hasAdmin = this.hasAdminAccount();
       const list = this.getStaffList();
-      return { hasAdmin, isInitialized: list.length > 0 || hasAdmin, staffList: list };
+      return { hasAdmin, isInitialized: list.length > 0 && hasAdmin, staffList: list };
     }
   }
 
@@ -1291,30 +1324,35 @@ class StorageService {
       const localStaff = this.getStaffList();
       const serverHasUsers = Array.isArray(data.users) && data.users.length > 0;
       const serverWipeTs = Number(data.lastWipeTimestamp || 0);
-      const localKnownWipeTs = Number(localStorage.getItem('sappy_last_known_wipe_ts') || 0);
+      const serverCatalogWipeTs = Number(data.lastCatalogWipeTimestamp || serverWipeTs);
+      const localKnownWipeTs = this.getWipeTimestamp();
 
-      // Check if an authoritative wipe happened on another device
       if (serverWipeTs > 0 && serverWipeTs > localKnownWipeTs) {
         localStorage.setItem('sappy_last_known_wipe_ts', String(serverWipeTs));
-        if (!serverHasUsers) {
-          this.factoryResetEverythingLocally();
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(
-              new CustomEvent('sappy-cross-device-wipe', {
-                detail: { wipeType: 'full', timestamp: serverWipeTs },
-              })
-            );
-          }
-          return { isInitialized: false, wiped: true, productsCount: 0, salesCount: 0 };
-        } else {
-          this.wipeCatalogLocally();
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(
-              new CustomEvent('sappy-cross-device-wipe', {
-                detail: { wipeType: 'catalog_only', timestamp: serverWipeTs },
-              })
-            );
-          }
+        localStorage.setItem('sappy_last_catalog_wipe_ts', String(serverCatalogWipeTs));
+      }
+
+      const activeWipeTs = Math.max(serverWipeTs, localKnownWipeTs);
+
+      // Check if an authoritative wipe happened
+      if (activeWipeTs > 0 && !serverHasUsers) {
+        this.factoryResetEverythingLocally();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('sappy-cross-device-wipe', {
+              detail: { wipeType: 'full', timestamp: activeWipeTs },
+            })
+          );
+        }
+        return { isInitialized: false, wiped: true, productsCount: 0, salesCount: 0 };
+      } else if (serverWipeTs > 0 && serverWipeTs > localKnownWipeTs && serverHasUsers) {
+        this.wipeCatalogLocally();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('sappy-cross-device-wipe', {
+              detail: { wipeType: 'catalog_only', timestamp: serverWipeTs },
+            })
+          );
         }
       }
 
