@@ -493,146 +493,293 @@ export class ExportService {
     return this.parseSpreadsheetRows(rawRows, existingProducts, prefix);
   }
 
-  // --- Generate Official PDF Receipt (Requirement #15) ---
-  static generatePDFReceipt(sale: Sale, settings: StoreSettings) {
+  // --- Generate Official Full A4/Letter Tax Invoice & Sales Receipt PDF ---
+  static async generateA4InvoicePDF(
+    sale: Sale,
+    settings: StoreSettings,
+    options?: { format?: 'a4' | 'letter' }
+  ): Promise<void> {
+    const isLetter = options?.format === 'letter';
     const doc = new jsPDF({
       orientation: 'portrait',
       unit: 'mm',
-      format: [80, 220 + sale.items.length * 8], // Dynamic thermal tape length
+      format: isLetter ? 'letter' : 'a4',
     });
 
-    const pageWidth = 80;
-    let y = 8;
+    const pageWidth = isLetter ? 215.9 : 210;
+    const pageHeight = isLetter ? 279.4 : 297;
+    const margin = 14;
+    const contentWidth = pageWidth - margin * 2;
+    let y = 16;
 
-    // Header: Store Name & Tagline
+    // Header Band: Forest Green Accent Line
+    doc.setFillColor(6, 78, 59); // Forest Green #064E3B
+    doc.rect(margin, y, contentWidth, 3, 'F');
+    y += 10;
+
+    // Store Info (Left) and Invoice Title/Metadata (Right)
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(14);
-    doc.setTextColor(6, 78, 59); // Deep Forest Green
-    doc.text(settings.storeName, pageWidth / 2, y, {align: 'center'});
-    y += 4.5;
+    doc.setFontSize(20);
+    doc.setTextColor(6, 78, 59);
+    doc.text(settings.storeName, margin, y);
 
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.setTextColor(30, 41, 59);
+    doc.text('TAX INVOICE / SALES RECEIPT', pageWidth - margin, y, { align: 'right' });
+    y += 5.5;
+
+    // Tagline / Subtitle
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
-    doc.setTextColor(80, 80, 80);
-    doc.text(settings.tagline, pageWidth / 2, y, {align: 'center'});
+    doc.setFontSize(9);
+    doc.setTextColor(100, 116, 139);
+    doc.text(settings.tagline || 'Quality stationery & digital printing.', margin, y);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.setTextColor(6, 78, 59);
+    doc.text(`INVOICE #: ${sale.receiptNumber}`, pageWidth - margin, y, { align: 'right' });
+    y += 5;
+
+    // Address & Phone
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8.5);
+    doc.setTextColor(71, 85, 105);
+    if (settings.address) {
+      doc.text(settings.address, margin, y, { maxWidth: 90 });
+      y += 4;
+    }
+    doc.text(`Phone: ${settings.phone || '+251 911 000 000'}${settings.email ? ` | Email: ${settings.email}` : ''}`, margin, y);
+
+    const dateFormatted = new Date(sale.date).toLocaleString([], {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(71, 85, 105);
+    doc.text(`Date & Time: ${dateFormatted}`, pageWidth - margin, y, { align: 'right' });
     y += 4;
 
-    doc.setFontSize(7);
-    doc.text(settings.address, pageWidth / 2, y, {align: 'center', maxWidth: 70});
-    y += 7;
-    doc.text(`Tel: ${settings.phone}`, pageWidth / 2, y, {align: 'center'});
-    y += 3.5;
     if (settings.taxNumber) {
-      doc.text(`TIN: ${settings.taxNumber}`, pageWidth / 2, y, {align: 'center'});
-      y += 4;
+      doc.text(`TIN: ${settings.taxNumber}`, margin, y);
     }
+    doc.text(`Cashier / Operator: ${sale.cashierName}`, pageWidth - margin, y, { align: 'right' });
+    y += 7;
 
-    // Divider
-    doc.setDrawColor(200, 200, 200);
-    doc.line(5, y, 75, y);
-    y += 4;
+    // Divider Line
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.4);
+    doc.line(margin, y, pageWidth - margin, y);
+    y += 6;
 
-    // Metadata
+    // Bill To / Customer Information Box
+    doc.setFillColor(248, 250, 252);
+    doc.roundedRect(margin, y, contentWidth, 20, 2, 2, 'F');
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(margin, y, contentWidth, 20, 2, 2, 'S');
+
+    doc.setFont('helvetica', 'bold');
     doc.setFontSize(8);
-    doc.setTextColor(30, 30, 30);
-    doc.text(`Receipt: ${sale.receiptNumber}`, 5, y);
-    doc.text(`Cashier: ${sale.cashierName}`, 75, y, {align: 'right'});
-    y += 4;
-    doc.text(`Date: ${new Date(sale.date).toLocaleDateString()} ${new Date(sale.date).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}`, 5, y);
-    if (sale.customerName) {
-      y += 4;
-      doc.text(`Customer: ${sale.customerName}`, 5, y);
-    }
-    y += 3;
+    doc.setTextColor(100, 116, 139);
+    doc.text('BILL TO / CUSTOMER', margin + 4, y + 6);
+    doc.text('PAYMENT DETAILS', margin + contentWidth / 2, y + 6);
 
-    // Table of Items
-    const tableData = sale.items.map((item) => [
-      `${item.productName}\n${item.sku}`,
-      `${item.quantity} ${item.unit}`,
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text(sale.customerName || 'Walk-in Retail Customer', margin + 4, y + 12);
+
+    const paymentMethodsSummary = sale.payments
+      .map((p) => `${p.method.replace('_', ' ').toUpperCase()}: ${p.amount.toFixed(2)} ${settings.currency}`)
+      .join(', ');
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8.5);
+    doc.text(paymentMethodsSummary || 'Cash Sale', margin + contentWidth / 2, y + 12);
+
+    doc.setFontSize(8);
+    doc.setTextColor(100, 116, 139);
+    doc.text(sale.customerPhone ? `Contact: ${sale.customerPhone}` : 'Direct In-Store Counter Transaction', margin + 4, y + 17);
+    doc.text(`Transaction Status: ${sale.status.toUpperCase()}`, margin + contentWidth / 2, y + 17);
+
+    y += 25;
+
+    // Items Table using autoTable
+    const tableRows = sale.items.map((item, idx) => [
+      String(idx + 1),
+      `${item.productName}\nSKU: ${item.sku || 'N/A'}`,
+      `${item.quantity} ${item.unit || 'pcs'}`,
       `${item.sellingPrice.toFixed(2)}`,
       `${(item.quantity * item.sellingPrice).toFixed(2)}`,
     ]);
 
     autoTable(doc, {
       startY: y,
-      margin: {left: 5, right: 5},
-      theme: 'plain',
-      styles: {fontSize: 7, cellPadding: 1, textColor: [38, 32, 27]},
-      headStyles: {fontStyle: 'bold', fillColor: [245, 241, 232], textColor: [6, 78, 59]},
-      head: [['Item / SKU', 'Qty', 'Price', 'Total']],
-      body: tableData,
+      margin: { left: margin, right: margin },
+      theme: 'grid',
+      headStyles: {
+        fillColor: [6, 78, 59],
+        textColor: [255, 255, 255],
+        fontStyle: 'bold',
+        fontSize: 8.5,
+        halign: 'left',
+      },
+      styles: {
+        fontSize: 8,
+        cellPadding: 2.8,
+        textColor: [15, 23, 42],
+        lineColor: [226, 232, 240],
+        lineWidth: 0.2,
+      },
+      columnStyles: {
+        0: { halign: 'center', cellWidth: 10 },
+        1: { halign: 'left' },
+        2: { halign: 'center', cellWidth: 26 },
+        3: { halign: 'right', cellWidth: 32 },
+        4: { halign: 'right', cellWidth: 36, fontStyle: 'bold' },
+      },
+      head: [['#', 'Item Description & SKU', 'Quantity', `Unit Price (${settings.currency})`, `Amount (${settings.currency})`]],
+      body: tableRows,
     });
 
-    y = (doc as any).lastAutoTable.finalY + 3;
+    const finalY = (doc as any).lastAutoTable.finalY + 6;
 
-    // Subtotals & Totals
-    doc.setFontSize(8);
+    // Financial Totals Block (Right-aligned)
+    const summaryBoxWidth = 85;
+    const summaryX = pageWidth - margin - summaryBoxWidth;
+
+    doc.setFillColor(248, 250, 252);
+    doc.roundedRect(summaryX, finalY, summaryBoxWidth, 42, 2, 2, 'F');
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(summaryX, finalY, summaryBoxWidth, 42, 2, 2, 'S');
+
+    let sumY = finalY + 6;
     doc.setFont('helvetica', 'normal');
-    doc.text('Subtotal:', 45, y);
-    doc.text(`${sale.subtotal.toFixed(2)} ${settings.currency}`, 75, y, {align: 'right'});
-    y += 4;
+    doc.setFontSize(8.5);
+    doc.setTextColor(71, 85, 105);
 
+    // Subtotal
+    doc.text('Subtotal:', summaryX + 4, sumY);
+    doc.text(`${sale.subtotal.toFixed(2)} ${settings.currency}`, pageWidth - margin - 4, sumY, { align: 'right' });
+    sumY += 5;
+
+    // Discount
     if (sale.totalDiscount > 0) {
-      doc.setTextColor(225, 29, 72); // Rose
-      doc.text('Discount:', 45, y);
-      doc.text(`-${sale.totalDiscount.toFixed(2)} ${settings.currency}`, 75, y, {align: 'right'});
-      doc.setTextColor(30, 30, 30);
-      y += 4;
+      doc.setTextColor(225, 29, 72);
+      doc.text('Discount Applied:', summaryX + 4, sumY);
+      doc.text(`-${sale.totalDiscount.toFixed(2)} ${settings.currency}`, pageWidth - margin - 4, sumY, { align: 'right' });
+      doc.setTextColor(71, 85, 105);
+      sumY += 5;
     }
 
-    if (sale.taxAmount > 0) {
-      doc.text(`Tax (${sale.taxRate}%):`, 45, y);
-      doc.text(`${sale.taxAmount.toFixed(2)} ${settings.currency}`, 75, y, {align: 'right'});
-      y += 4;
-    }
+    // VAT / Tax
+    doc.text(`Tax / VAT (${sale.taxRate}%):`, summaryX + 4, sumY);
+    doc.text(`${sale.taxAmount.toFixed(2)} ${settings.currency}`, pageWidth - margin - 4, sumY, { align: 'right' });
+    sumY += 6;
+
+    // Divider in summary box
+    doc.setDrawColor(203, 213, 225);
+    doc.line(summaryX + 3, sumY - 1, pageWidth - margin - 3, sumY - 1);
+    sumY += 2;
+
+    // Grand Total
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.setTextColor(6, 78, 59);
+    doc.text('GRAND TOTAL:', summaryX + 4, sumY + 2);
+    doc.text(`${sale.grandTotal.toFixed(2)} ${settings.currency}`, pageWidth - margin - 4, sumY + 2, { align: 'right' });
+
+    // Tender Details on Left of Summary Box
+    const leftDetailX = margin + 2;
+    let leftDetailY = finalY + 4;
 
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(10);
-    doc.text('TOTAL:', 45, y);
-    doc.text(`${sale.grandTotal.toFixed(2)} ${settings.currency}`, 75, y, {align: 'right'});
-    y += 5;
+    doc.setFontSize(8.5);
+    doc.setTextColor(30, 41, 59);
+    doc.text('PAYMENT TENDER BREAKDOWN:', leftDetailX, leftDetailY);
+    leftDetailY += 5;
 
-    // Payments Breakdown
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7.5);
+    doc.setFontSize(8);
+    doc.setTextColor(71, 85, 105);
     sale.payments.forEach((p) => {
-      const label = p.method === 'mobile_transfer' ? 'Mobile Transfer' : p.method.toUpperCase();
-      doc.text(`Paid (${label}):`, 45, y);
-      doc.text(`${p.amount.toFixed(2)} ${settings.currency}`, 75, y, {align: 'right'});
-      y += 3.5;
+      const pLabel = p.method === 'mobile_transfer' ? 'Telebirr / CBE Mobile Transfer' : p.method.replace('_', ' ').toUpperCase();
+      doc.text(`• ${pLabel}: ${p.amount.toFixed(2)} ${settings.currency}`, leftDetailX, leftDetailY);
+      leftDetailY += 4;
     });
 
     if (sale.changeGiven > 0) {
-      doc.text('Change Given:', 45, y);
-      doc.text(`${sale.changeGiven.toFixed(2)} ${settings.currency}`, 75, y, {align: 'right'});
-      y += 3.5;
+      doc.text(`• Change Returned to Customer: ${sale.changeGiven.toFixed(2)} ${settings.currency}`, leftDetailX, leftDetailY);
+      leftDetailY += 4;
     }
-
     if (sale.creditAdded > 0) {
       doc.setFont('helvetica', 'bold');
-      doc.text('Added to Store Credit:', 35, y);
-      doc.text(`${sale.creditAdded.toFixed(2)} ${settings.currency}`, 75, y, {align: 'right'});
-      y += 4;
+      doc.setTextColor(217, 119, 6);
+      doc.text(`• Added to Store Credit Balance: ${sale.creditAdded.toFixed(2)} ${settings.currency}`, leftDetailX, leftDetailY);
+      leftDetailY += 4;
     }
 
-    // Divider
-    y += 2;
-    doc.setDrawColor(200, 200, 200);
-    doc.line(5, y, 75, y);
-    y += 4;
+    // Barcode & QR Code verification on bottom left
+    const qrPng = await this.generateQRPNG(sale.receiptNumber);
+    const barcodePng = this.generateBarcodePNG(sale.receiptNumber);
 
-    // Footer Message
+    const bottomY = Math.max(finalY + 46, leftDetailY + 6);
+
+    if (qrPng) {
+      doc.addImage(qrPng, 'PNG', margin, bottomY, 20, 20);
+    }
+    if (barcodePng) {
+      doc.addImage(barcodePng, 'PNG', margin + 24, bottomY + 1, 48, 14);
+      doc.setFont('courier', 'normal');
+      doc.setFontSize(7);
+      doc.setTextColor(100, 116, 139);
+      doc.text(sale.receiptNumber, margin + 48, bottomY + 18, { align: 'center' });
+    }
+
+    // Official Stamp / Signature Area on Bottom Right
+    const stampX = pageWidth - margin - 55;
+    doc.setDrawColor(203, 213, 225);
+    doc.line(stampX, bottomY + 14, pageWidth - margin, bottomY + 14);
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7);
-    doc.setTextColor(90, 90, 90);
-    doc.text(settings.receiptFooterMessage, pageWidth / 2, y, {align: 'center', maxWidth: 68});
-    y += 7;
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text('Authorized Signature & Stamp', stampX + 27, bottomY + 18, { align: 'center' });
 
-    doc.setFont('courier', 'normal');
-    doc.text(`* ${sale.receiptNumber} *`, pageWidth / 2, y, {align: 'center'});
+    // Official Paid Stamp
+    if (sale.status === 'COMPLETED') {
+      doc.setDrawColor(6, 78, 59);
+      doc.setLineWidth(0.8);
+      doc.roundedRect(pageWidth - margin - 38, bottomY - 3, 36, 13, 1.5, 1.5, 'S');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8.5);
+      doc.setTextColor(6, 78, 59);
+      doc.text('✓ PAID IN FULL', pageWidth - margin - 20, bottomY + 4.5, { align: 'center' });
+      doc.setFontSize(6.5);
+      doc.text(new Date(sale.date).toLocaleDateString(), pageWidth - margin - 20, bottomY + 8.5, { align: 'center' });
+    }
 
-    // Save and open
-    doc.save(`Receipt_${sale.receiptNumber}.pdf`);
+    // Terms / Footer Notes
+    const footerY = pageHeight - 12;
+    doc.setDrawColor(226, 232, 240);
+    doc.line(margin, footerY - 4, pageWidth - margin, footerY - 4);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text(
+      settings.receiptFooterMessage || 'Thank you for choosing Sappy Stationary! Quality stationery & digital printing.',
+      pageWidth / 2,
+      footerY,
+      { align: 'center' }
+    );
+
+    doc.save(`Invoice_${sale.receiptNumber}.pdf`);
+  }
+
+  // Backwards-compatible alias: generates full A4 invoice
+  static async generatePDFReceipt(sale: Sale, settings: StoreSettings): Promise<void> {
+    return this.generateA4InvoicePDF(sale, settings);
   }
 
   // --- Generate Shift Summary Report PDF ---

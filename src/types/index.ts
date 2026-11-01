@@ -169,6 +169,7 @@ export interface Sale {
   cashierName: string;
   customerId?: string;
   customerName?: string;
+  customerPhone?: string;
   items: CartItem[];
   subtotal: number;
   cartDiscountType?: 'percent' | 'fixed';

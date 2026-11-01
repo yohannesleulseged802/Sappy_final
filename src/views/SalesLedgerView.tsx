@@ -7,6 +7,7 @@ import {
   Printer,
   RotateCcw,
   FileDown,
+  FileText,
   X,
   AlertCircle,
   Check,
@@ -16,6 +17,7 @@ import {storage} from '../services/storage';
 import {ExportService} from '../services/export';
 import {BarcodeRenderer} from '../components/common/BarcodeRenderer';
 import {PinModal} from '../components/common/PinModal';
+import {A4InvoiceModal} from '../components/pos/A4InvoiceModal';
 
 interface SalesLedgerViewProps {
   sales: Sale[];
@@ -36,6 +38,9 @@ export const SalesLedgerView: React.FC<SalesLedgerViewProps> = ({
 
   // Selected Sale for Detailed Inspector
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
+
+  // Selected Sale for Full A4 Invoice & Receipt Generation
+  const [invoiceSale, setInvoiceSale] = useState<Sale | null>(null);
 
   // Refund Modal State
   const [isRefundModalOpen, setIsRefundModalOpen] = useState(false);
@@ -215,7 +220,16 @@ export const SalesLedgerView: React.FC<SalesLedgerViewProps> = ({
                 </div>
 
                 {/* Action Row */}
-                <div className="flex items-center justify-end gap-2 pt-1">
+                <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+                  <button
+                    onClick={() => setInvoiceSale(s)}
+                    className="px-3 py-2 min-h-[44px] bg-[#064e3b] hover:bg-[#043b2c] text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 touch-manipulation cursor-pointer shadow-xs"
+                    title="Generate official A4 tax invoice & printable receipt"
+                  >
+                    <FileText className="w-4 h-4 text-[#6ee7b7]" />
+                    <span>Generate Receipt</span>
+                  </button>
+
                   <button
                     onClick={() => setSelectedSale(s)}
                     className="px-3 py-2 min-h-[44px] bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 text-stone-800 dark:text-stone-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 touch-manipulation cursor-pointer border border-stone-200 dark:border-stone-700"
@@ -225,12 +239,12 @@ export const SalesLedgerView: React.FC<SalesLedgerViewProps> = ({
                   </button>
 
                   <button
-                    onClick={() => ExportService.generatePDFReceipt(s, settings)}
+                    onClick={() => ExportService.generateA4InvoicePDF(s, settings)}
                     className="p-2 min-h-[44px] min-w-[44px] hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-600 dark:text-stone-300 rounded-xl transition flex items-center justify-center touch-manipulation cursor-pointer border border-stone-200 dark:border-stone-700"
-                    title="Download Receipt PDF"
-                    aria-label="Download receipt PDF"
+                    title="Download A4 Invoice PDF"
+                    aria-label="Download A4 invoice PDF"
                   >
-                    <FileDown className="w-4 h-4" />
+                    <Download className="w-4 h-4" />
                   </button>
 
                   {s.status === 'COMPLETED' && (
@@ -319,26 +333,35 @@ export const SalesLedgerView: React.FC<SalesLedgerViewProps> = ({
                       </span>
                     </td>
                     <td className="p-3 text-right">
-                      <div className="flex items-center justify-end gap-1">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          onClick={() => setInvoiceSale(s)}
+                          className="px-2.5 py-1 bg-[#064e3b] hover:bg-[#043b2c] text-white rounded-lg text-xs font-bold transition flex items-center gap-1 shadow-2xs cursor-pointer"
+                          title="Generate official A4 invoice & printable receipt"
+                        >
+                          <FileText className="w-3.5 h-3.5 text-[#6ee7b7]" />
+                          <span>Generate Receipt</span>
+                        </button>
+
                         <button
                           onClick={() => setSelectedSale(s)}
-                          className="px-2 py-1 bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 text-stone-800 dark:text-stone-200 rounded-lg text-xs font-semibold transition"
+                          className="px-2 py-1 bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 text-stone-800 dark:text-stone-200 rounded-lg text-xs font-semibold transition cursor-pointer"
                         >
                           Inspect
                         </button>
 
                         <button
-                          onClick={() => ExportService.generatePDFReceipt(s, settings)}
-                          className="p-1 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-600 dark:text-stone-300 rounded-lg transition"
-                          title="Download Receipt PDF"
+                          onClick={() => ExportService.generateA4InvoicePDF(s, settings)}
+                          className="p-1 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-600 dark:text-stone-300 rounded-lg transition cursor-pointer"
+                          title="Download A4 Invoice PDF"
                         >
-                          <FileDown className="w-3.5 h-3.5" />
+                          <Download className="w-3.5 h-3.5" />
                         </button>
 
                         {s.status === 'COMPLETED' && (
                           <button
                             onClick={() => handleInitiateRefund(s)}
-                            className="p-1 hover:bg-rose-100 dark:hover:bg-rose-950 text-rose-600 rounded-lg transition"
+                            className="p-1 hover:bg-rose-100 dark:hover:bg-rose-950 text-rose-600 rounded-lg transition cursor-pointer"
                             title="Refund Sale"
                           >
                             <RotateCcw className="w-3.5 h-3.5" />
@@ -441,13 +464,25 @@ export const SalesLedgerView: React.FC<SalesLedgerViewProps> = ({
             </div>
 
             {/* Action Buttons */}
-            <div className="flex justify-end gap-2">
+            <div className="flex flex-wrap justify-end gap-2">
               <button
-                onClick={() => ExportService.generatePDFReceipt(selectedSale, settings)}
-                className="px-4 py-2 bg-[#064e3b] text-white rounded-xl text-xs font-bold flex items-center gap-1.5"
+                type="button"
+                onClick={() => {
+                  setInvoiceSale(selectedSale);
+                }}
+                className="px-4 py-2 bg-[#064e3b] hover:bg-[#043b2c] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md transition cursor-pointer"
               >
-                <FileDown className="w-3.5 h-3.5" />
-                <span>Download PDF Receipt</span>
+                <FileText className="w-3.5 h-3.5 text-[#6ee7b7]" />
+                <span>Generate Official A4 Invoice</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => ExportService.generateA4InvoicePDF(selectedSale, settings)}
+                className="px-4 py-2 bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 text-stone-900 dark:text-stone-100 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer border border-stone-200 dark:border-stone-700"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Download PDF</span>
               </button>
             </div>
           </div>
@@ -477,13 +512,13 @@ export const SalesLedgerView: React.FC<SalesLedgerViewProps> = ({
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setIsRefundModalOpen(false)}
-                className="px-3 py-1.5 text-xs text-stone-500"
+                className="px-3 py-1.5 text-xs text-stone-500 cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 onClick={() => setIsPinModalOpen(true)}
-                className="px-4 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold"
+                className="px-4 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold cursor-pointer"
               >
                 Authorize &amp; Refund
               </button>
@@ -500,6 +535,14 @@ export const SalesLedgerView: React.FC<SalesLedgerViewProps> = ({
         title="Manager Authorization"
         description="Authorize refund and stock return with Manager PIN"
         requiredRole="manager"
+      />
+
+      {/* A4 Tax Invoice & Sales Receipt Modal */}
+      <A4InvoiceModal
+        sale={invoiceSale}
+        settings={settings}
+        isOpen={!!invoiceSale}
+        onClose={() => setInvoiceSale(null)}
       />
     </div>
   );

@@ -172,16 +172,22 @@ app.get('/api/auth/system-status', (req: Request, res: Response) => {
   const wipeTs = Number(meta.lastWipeTimestamp || 0);
   const deletedIds = (meta.deletedUserIds || []).map((id) => id.toLowerCase());
 
-  // Strict tombstone watermark: filter out any resurrected users created before or at wipe timestamp or in deleted list
+  // Strict tombstone watermark: filter out accounts explicitly registered in deletedIds unless re-created after wipe
   const validUsers = rawUsers.filter((u) => {
     const uid = (u.uid || '').toLowerCase();
     const email = (u.email || '').toLowerCase();
     const username = (u.username || '').toLowerCase();
-    const createdMs = u.createdAt ? new Date(u.createdAt).getTime() : 0;
-    if (wipeTs > 0 && createdMs <= wipeTs) {
-      return false;
-    }
-    if (deletedIds.includes(uid) || (email && deletedIds.includes(email)) || (username && deletedIds.includes(username))) {
+    const isTombstoned =
+      (uid && deletedIds.includes(uid)) ||
+      (email && deletedIds.includes(email)) ||
+      (username && deletedIds.includes(username));
+
+    if (isTombstoned) {
+      const createdMs = u.createdAt
+        ? new Date(u.createdAt).getTime()
+        : u.updatedAt
+        ? new Date(u.updatedAt).getTime()
+        : 0;
       if (wipeTs > 0 && createdMs > wipeTs) {
         return true;
       }
@@ -982,11 +988,13 @@ app.post('/api/pos/sync', (req: Request, res: Response) => {
       const uid = (inc.uid || inc.id || '').toLowerCase();
       const email = (inc.email || '').toLowerCase();
       const username = (inc.username || '').toLowerCase();
-      const t = inc.createdAt ? new Date(inc.createdAt).getTime() : 0;
-      if (wipeTs > 0 && t <= wipeTs) {
-        return false;
-      }
-      if (deletedIds.includes(uid) || (email && deletedIds.includes(email)) || (username && deletedIds.includes(username))) {
+      const isTombstoned =
+        (uid && deletedIds.includes(uid)) ||
+        (email && deletedIds.includes(email)) ||
+        (username && deletedIds.includes(username));
+
+      if (isTombstoned) {
+        const t = inc.createdAt ? new Date(inc.createdAt).getTime() : inc.updatedAt ? new Date(inc.updatedAt).getTime() : 0;
         if (wipeTs > 0 && t > wipeTs) return true;
         return false;
       }
@@ -997,11 +1005,13 @@ app.post('/api/pos/sync', (req: Request, res: Response) => {
       const uid = (u.uid || '').toLowerCase();
       const email = (u.email || '').toLowerCase();
       const username = (u.username || '').toLowerCase();
-      const t = u.createdAt ? new Date(u.createdAt).getTime() : 0;
-      if (wipeTs > 0 && t <= wipeTs) {
-        return false;
-      }
-      if (deletedIds.includes(uid) || (email && deletedIds.includes(email)) || (username && deletedIds.includes(username))) {
+      const isTombstoned =
+        (uid && deletedIds.includes(uid)) ||
+        (email && deletedIds.includes(email)) ||
+        (username && deletedIds.includes(username));
+
+      if (isTombstoned) {
+        const t = u.createdAt ? new Date(u.createdAt).getTime() : u.updatedAt ? new Date(u.updatedAt).getTime() : 0;
         if (wipeTs > 0 && t > wipeTs) return true;
         return false;
       }

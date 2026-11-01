@@ -145,23 +145,8 @@ class StorageService {
     if (!localStorage.getItem(STORAGE_KEYS.PRODUCTS)) {
       localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify([]));
     }
-    // Force clean purge of all user accounts across devices per user instruction
-    const hasPurgedOldUsers = localStorage.getItem('sappy_users_purged_v6_clean') === 'true';
-    if (!hasPurgedOldUsers) {
+    if (!localStorage.getItem(STORAGE_KEYS.STAFF)) {
       localStorage.setItem(STORAGE_KEYS.STAFF, JSON.stringify([]));
-      localStorage.removeItem(STORAGE_KEYS.CURRENT_STAFF_ID);
-      localStorage.removeItem(STORAGE_KEYS.SESSION_AUTHENTICATED);
-      localStorage.removeItem(STORAGE_KEYS.REGISTER_LOCKED);
-      localStorage.removeItem(STORAGE_KEYS.FAILED_ATTEMPTS);
-      localStorage.removeItem(STORAGE_KEYS.LOCKOUT_UNTIL);
-      localStorage.removeItem(STORAGE_KEYS.STORE_INITIALIZED);
-      localStorage.removeItem('sappy_initial_signup_completed');
-      localStorage.setItem('sappy_users_purged_v6_clean', 'true');
-    } else {
-      const rawStaff = localStorage.getItem(STORAGE_KEYS.STAFF);
-      if (!rawStaff) {
-        localStorage.setItem(STORAGE_KEYS.STAFF, JSON.stringify([]));
-      }
     }
     if (!localStorage.getItem(STORAGE_KEYS.CUSTOMERS)) {
       localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify([]));
@@ -349,30 +334,37 @@ class StorageService {
       const list: Staff[] = val ? JSON.parse(val) : INITIAL_STAFF;
       const wipeTs = this.getWipeTimestamp();
       const deletedIds = this.getDeletedUserIds();
+      const currentStaffId = localStorage.getItem(STORAGE_KEYS.CURRENT_STAFF_ID);
 
       const filtered = list.filter((s) => {
+        // Never purge the active logged-in staff
+        if (currentStaffId && s.id === currentStaffId) {
+          return true;
+        }
+
         const uid = (s.id || '').toLowerCase();
         const empId = (s.employeeId || '').toLowerCase();
         const email = (s.email || '').toLowerCase();
         const username = (s.username || '').toLowerCase();
 
-        if (
+        const isTombstoned =
           (uid && deletedIds.includes(uid)) ||
           (empId && deletedIds.includes(empId)) ||
           (email && deletedIds.includes(email)) ||
-          (username && deletedIds.includes(username))
-        ) {
+          (username && deletedIds.includes(username));
+
+        if (isTombstoned) {
           if (wipeTs > 0) {
-            const t = s.createdAt ? new Date(s.createdAt).getTime() : 0;
+            const t = s.createdAt
+              ? new Date(s.createdAt).getTime()
+              : s.updatedAt
+              ? new Date(s.updatedAt).getTime()
+              : 0;
             if (t > wipeTs) return true;
           }
           return false;
         }
 
-        if (wipeTs > 0) {
-          const t = s.createdAt ? new Date(s.createdAt).getTime() : 0;
-          return t > wipeTs;
-        }
         return true;
       });
 
@@ -389,30 +381,37 @@ class StorageService {
     if (!this.isBrowser()) return;
     const wipeTs = this.getWipeTimestamp();
     const deletedIds = this.getDeletedUserIds();
+    const currentStaffId = localStorage.getItem(STORAGE_KEYS.CURRENT_STAFF_ID);
 
     const valid = staff.filter((s) => {
+      // Never purge the active logged-in staff
+      if (currentStaffId && s.id === currentStaffId) {
+        return true;
+      }
+
       const uid = (s.id || '').toLowerCase();
       const empId = (s.employeeId || '').toLowerCase();
       const email = (s.email || '').toLowerCase();
       const username = (s.username || '').toLowerCase();
 
-      if (
+      const isTombstoned =
         (uid && deletedIds.includes(uid)) ||
         (empId && deletedIds.includes(empId)) ||
         (email && deletedIds.includes(email)) ||
-        (username && deletedIds.includes(username))
-      ) {
+        (username && deletedIds.includes(username));
+
+      if (isTombstoned) {
         if (wipeTs > 0) {
-          const t = s.createdAt ? new Date(s.createdAt).getTime() : 0;
+          const t = s.createdAt
+            ? new Date(s.createdAt).getTime()
+            : s.updatedAt
+            ? new Date(s.updatedAt).getTime()
+            : 0;
           if (t > wipeTs) return true;
         }
         return false;
       }
 
-      if (wipeTs > 0) {
-        const t = s.createdAt ? new Date(s.createdAt).getTime() : 0;
-        return t > wipeTs;
-      }
       return true;
     });
 
@@ -509,17 +508,46 @@ class StorageService {
 
   mergeRemoteStaff(remoteStaff: Staff[], onUpdate?: (staffList: Staff[]) => void): Staff[] {
     const localList = this.getStaffList();
+    const wipeTs = this.getWipeTimestamp();
+    const deletedIds = this.getDeletedUserIds();
 
-    // Remote Firestore is the single authoritative source of truth for accounts
+    const validLocal = localList.filter((l) => {
+      const uid = (l.id || '').toLowerCase();
+      const empId = (l.employeeId || '').toLowerCase();
+      const email = (l.email || '').toLowerCase();
+      const username = (l.username || '').toLowerCase();
+      const isTombstoned =
+        (uid && deletedIds.includes(uid)) ||
+        (empId && deletedIds.includes(empId)) ||
+        (email && deletedIds.includes(email)) ||
+        (username && deletedIds.includes(username));
+      if (isTombstoned) {
+        const t = l.createdAt ? new Date(l.createdAt).getTime() : l.updatedAt ? new Date(l.updatedAt).getTime() : 0;
+        return wipeTs > 0 && t > wipeTs;
+      }
+      return true;
+    });
+
+    // Remote Firestore users mapped with local passwords
     const staffList: Staff[] = remoteStaff.map((r) => {
-      const localMatch = localList.find(
+      const localMatch = validLocal.find(
         (l) => l.id === r.id || (l.email && r.email && l.email.toLowerCase() === r.email.toLowerCase())
       );
       return {
         ...r,
-        // Retain local password if remote omitted it, otherwise use remote password
         password: r.password || localMatch?.password || '',
       };
+    });
+
+    // Keep any valid local accounts not yet synced to remote
+    validLocal.forEach((loc) => {
+      const exists = staffList.some(
+        (s) => s.id === loc.id || (s.email && loc.email && s.email.toLowerCase() === loc.email.toLowerCase())
+      );
+      if (!exists) {
+        staffList.push(loc);
+        this.pushStaffToFirestore(loc).catch(() => {});
+      }
     });
 
     this.saveStaffList(staffList);
@@ -528,9 +556,6 @@ class StorageService {
       if (staffList.length > 0) {
         localStorage.setItem(STORAGE_KEYS.STORE_INITIALIZED, 'true');
         localStorage.setItem('sappy_initial_signup_completed', 'true');
-      } else {
-        localStorage.removeItem(STORAGE_KEYS.STORE_INITIALIZED);
-        localStorage.removeItem('sappy_initial_signup_completed');
       }
     }
 
@@ -555,30 +580,41 @@ class StorageService {
         const email = (s.email || '').toLowerCase();
         const username = (s.username || '').toLowerCase();
 
-        if (
+        const isTombstoned =
           (uid && deletedIds.includes(uid)) ||
           (empId && deletedIds.includes(empId)) ||
           (email && deletedIds.includes(email)) ||
-          (username && deletedIds.includes(username))
-        ) {
+          (username && deletedIds.includes(username));
+
+        if (isTombstoned) {
+          const t = s.createdAt ? new Date(s.createdAt).getTime() : s.updatedAt ? new Date(s.updatedAt).getTime() : 0;
+          if (wipeTs > 0 && t > wipeTs) {
+            remoteStaff.push(s);
+          }
           return;
         }
 
-        const t = s.createdAt ? new Date(s.createdAt).getTime() : 0;
-        if (wipeTs === 0 || t > wipeTs) {
-          remoteStaff.push(s);
-        }
+        remoteStaff.push(s);
       });
 
       if (remoteStaff.length > 0) {
         this.mergeRemoteStaff(remoteStaff, onUpdate);
       } else {
-        this.saveStaffList([]);
-        if (this.isBrowser()) {
-          localStorage.removeItem(STORAGE_KEYS.STORE_INITIALIZED);
-          localStorage.removeItem('sappy_initial_signup_completed');
+        // Remote is empty or quota-restricted: Check if local storage has valid staff
+        const localList = this.getStaffList();
+        if (localList.length > 0) {
+          // Safeguard local accounts!
+          this.saveStaffList(localList);
+          this.pushStaffToServer(localList);
+          localList.forEach((s) => this.pushStaffToFirestore(s).catch(() => {}));
+          if (this.isBrowser()) {
+            localStorage.setItem(STORAGE_KEYS.STORE_INITIALIZED, 'true');
+            localStorage.setItem('sappy_initial_signup_completed', 'true');
+          }
+          if (onUpdate) onUpdate(localList);
+        } else {
+          if (onUpdate) onUpdate([]);
         }
-        if (onUpdate) onUpdate([]);
       }
     };
 
@@ -642,6 +678,11 @@ class StorageService {
   }
 
   addStaffAccount(newStaff: Staff) {
+    if (!newStaff.createdAt) {
+      newStaff.createdAt = new Date().toISOString();
+    }
+    newStaff.updatedAt = new Date().toISOString();
+
     // Crucial: remove newStaff's id, email, and username from deletedUserIds tombstones so it is never discarded
     const cleanId = (newStaff.id || '').trim().toLowerCase();
     const cleanEmail = (newStaff.email || '').trim().toLowerCase();
@@ -1346,15 +1387,12 @@ class StorageService {
   private mergeServerUsersWithLocal(serverUsers: any[]): Staff[] {
     const wipeTs = this.getWipeTimestamp();
     const deletedIds = this.getDeletedUserIds();
+    const localList = this.getStaffList();
 
     if (!Array.isArray(serverUsers) || serverUsers.length === 0) {
-      if (wipeTs > 0 || deletedIds.length > 0) {
-        this.saveStaffList([]);
-      }
-      return [];
+      return localList;
     }
 
-    const localList = this.getStaffList();
     const mappedUsers: Staff[] = serverUsers
       .filter((u: any) => {
         const uid = (u.uid || u.id || u.employeeId || '').toLowerCase();
@@ -1362,19 +1400,21 @@ class StorageService {
         const email = (u.email || '').toLowerCase();
         const username = (u.username || '').toLowerCase();
 
-        if (
+        const isTombstoned =
           (uid && deletedIds.includes(uid)) ||
           (empId && deletedIds.includes(empId)) ||
           (email && deletedIds.includes(email)) ||
-          (username && deletedIds.includes(username))
-        ) {
-          return false;
+          (username && deletedIds.includes(username));
+
+        if (isTombstoned) {
+          const createdMs = u.createdAt
+            ? new Date(u.createdAt).getTime()
+            : u.updatedAt
+            ? new Date(u.updatedAt).getTime()
+            : 0;
+          return wipeTs > 0 && createdMs > wipeTs;
         }
 
-        if (wipeTs > 0) {
-          const createdMs = u.createdAt ? new Date(u.createdAt).getTime() : 0;
-          return createdMs > wipeTs;
-        }
         return true;
       })
       .map((u: any) => {
@@ -1416,7 +1456,17 @@ class StorageService {
         };
       });
 
-    return mappedUsers;
+    // Merge unsynced local accounts that are not in mappedUsers
+    const mappedIds = new Set(
+      mappedUsers.map((m) => m.id).concat(mappedUsers.map((m) => (m.email || '').toLowerCase())).filter(Boolean)
+    );
+    const unsynced = localList.filter((l) => {
+      const match = mappedIds.has(l.id) || (l.email && mappedIds.has(l.email.toLowerCase()));
+      if (match) return false;
+      return !this.isUserDeleted(l.id, l.email, l.username);
+    });
+
+    return [...mappedUsers, ...unsynced];
   }
 
   async syncStaffFromBackend(): Promise<{ hasAdmin: boolean; isInitialized: boolean; staffList: Staff[] }> {
@@ -1437,20 +1487,27 @@ class StorageService {
       const serverWipeTs = Number(statusRes?.lastWipeTimestamp || 0);
       const localKnownWipeTs = this.getWipeTimestamp();
 
-      if (serverWipeTs > 0 && serverWipeTs > localKnownWipeTs) {
+      // Only acknowledge and trigger an authoritative wipe if the server wipe is strictly newer
+      if (serverWipeTs > 0 && serverWipeTs > localKnownWipeTs && (!usersRes?.users || usersRes.users.length === 0)) {
         localStorage.setItem('sappy_last_known_wipe_ts', String(serverWipeTs));
-      }
+        const localList = this.getStaffList();
+        const validLocal = localList.filter((s) => {
+          const t = s.createdAt ? new Date(s.createdAt).getTime() : s.updatedAt ? new Date(s.updatedAt).getTime() : 0;
+          return t > serverWipeTs;
+        });
 
-      const activeWipeTs = Math.max(serverWipeTs, localKnownWipeTs);
+        if (validLocal.length > 0) {
+          this.pushStaffToServer(validLocal);
+          const hasAdmin = validLocal.some((s) => (s.role === 'admin' && s.active) || (s.approvalStatus === 'approved' && s.active));
+          return { hasAdmin, isInitialized: true, staffList: validLocal };
+        }
 
-      // If an authoritative wipe occurred and server has no users, purge local storage immediately
-      if (activeWipeTs > 0 && (!usersRes?.users || usersRes.users.length === 0)) {
         this.resetAllUsersLocally();
         this.saveStaffList([]);
         if (typeof window !== 'undefined') {
           window.dispatchEvent(
             new CustomEvent('sappy-cross-device-wipe', {
-              detail: { wipeType: 'staff_only', timestamp: activeWipeTs },
+              detail: { wipeType: 'staff_only', timestamp: serverWipeTs },
             })
           );
         }
@@ -1464,16 +1521,20 @@ class StorageService {
           localStorage.setItem(STORAGE_KEYS.STORE_INITIALIZED, 'true');
           const hasAdmin = merged.some((s) => (s.role === 'admin' && s.active) || (s.approvalStatus === 'approved' && s.active));
           return { hasAdmin, isInitialized: true, staffList: merged };
-        } else {
-          this.resetAllUsersLocally();
-          return { hasAdmin: false, isInitialized: false, staffList: [] };
         }
       }
 
-      return { hasAdmin: false, isInitialized: false, staffList: [] };
+      // Offline or empty server response: preserve and safeguard local staff
+      const fallbackList = this.getStaffList();
+      const hasAdmin = fallbackList.some((s) => (s.role === 'admin' && s.active) || (s.approvalStatus === 'approved' && s.active));
+      if (fallbackList.length > 0) {
+        this.pushStaffToServer(fallbackList);
+        localStorage.setItem(STORAGE_KEYS.STORE_INITIALIZED, 'true');
+      }
+      return { hasAdmin, isInitialized: fallbackList.length > 0, staffList: fallbackList };
     } catch {
-      const hasAdmin = this.hasAdminAccount();
       const list = this.getStaffList();
+      const hasAdmin = this.hasAdminAccount();
       return { hasAdmin, isInitialized: list.length > 0 && hasAdmin, staffList: list };
     }
   }
@@ -1502,21 +1563,26 @@ class StorageService {
         this.setDeletedUserIds([...this.getDeletedUserIds(), ...data.deletedUserIds]);
       }
 
-      const localStaff = this.getStaffList();
       const serverHasUsers = Array.isArray(data.users) && data.users.length > 0;
       const serverWipeTs = Number(data.lastWipeTimestamp || 0);
       const serverCatalogWipeTs = Number(data.lastCatalogWipeTimestamp || serverWipeTs);
       const localKnownWipeTs = this.getWipeTimestamp();
 
-      if (serverWipeTs > 0 && serverWipeTs > localKnownWipeTs) {
+      // Check if a new authoritative wipe happened on the server
+      if (serverWipeTs > 0 && serverWipeTs > localKnownWipeTs && !serverHasUsers) {
         localStorage.setItem('sappy_last_known_wipe_ts', String(serverWipeTs));
         localStorage.setItem('sappy_last_catalog_wipe_ts', String(serverCatalogWipeTs));
-      }
+        const localList = this.getStaffList();
+        const validLocal = localList.filter((s) => {
+          const t = s.createdAt ? new Date(s.createdAt).getTime() : s.updatedAt ? new Date(s.updatedAt).getTime() : 0;
+          return t > serverWipeTs;
+        });
 
-      const activeWipeTs = Math.max(serverWipeTs, localKnownWipeTs);
+        if (validLocal.length > 0) {
+          this.pushStaffToServer(validLocal);
+          return { isInitialized: true, wiped: false, productsCount: this.getProducts().length, salesCount: this.getSales().length };
+        }
 
-      // Check if an authoritative wipe happened
-      if (activeWipeTs > 0 && !serverHasUsers) {
         this.resetAllUsersLocally();
         this.saveStaffList([]);
         if (data.wipeType === 'full' || (!Array.isArray(data.products) || data.products.length === 0)) {
@@ -1525,12 +1591,14 @@ class StorageService {
         if (typeof window !== 'undefined') {
           window.dispatchEvent(
             new CustomEvent('sappy-cross-device-wipe', {
-              detail: { wipeType: data.wipeType || 'staff_only', timestamp: activeWipeTs },
+              detail: { wipeType: data.wipeType || 'staff_only', timestamp: serverWipeTs },
             })
           );
         }
         return { isInitialized: false, wiped: true, productsCount: 0, salesCount: 0 };
       } else if (serverWipeTs > 0 && serverWipeTs > localKnownWipeTs && serverHasUsers) {
+        localStorage.setItem('sappy_last_known_wipe_ts', String(serverWipeTs));
+        localStorage.setItem('sappy_last_catalog_wipe_ts', String(serverCatalogWipeTs));
         this.wipeCatalogLocally();
         if (typeof window !== 'undefined') {
           window.dispatchEvent(
@@ -1572,15 +1640,13 @@ class StorageService {
         this.saveStaffList(merged);
         if (merged.length > 0) {
           this.setStoreInitialized(true);
-        } else {
-          this.resetAllUsersLocally();
         }
-      } else if (serverWipeTs === 0 && localStaff.length > 0) {
-        this.pushStaffToServer(localStaff);
-        this.setStoreInitialized(true);
       } else {
-        this.resetAllUsersLocally();
-        this.saveStaffList([]);
+        const localList = this.getStaffList();
+        if (localList.length > 0) {
+          this.pushStaffToServer(localList);
+          this.setStoreInitialized(true);
+        }
       }
 
       return {
@@ -1611,6 +1677,15 @@ class StorageService {
       lastLogin: new Date().toISOString(),
     };
 
+    const cleanId = (newAdmin.id || '').trim().toLowerCase();
+    const cleanEmail = (newAdmin.email || '').trim().toLowerCase();
+    const cleanUsername = (newAdmin.username || '').trim().toLowerCase();
+    const curDeleted = this.getDeletedUserIds();
+    const filteredDeleted = curDeleted.filter((d) => d !== cleanId && d !== cleanEmail && d !== cleanUsername);
+    if (filteredDeleted.length !== curDeleted.length) {
+      this.setDeletedUserIds(filteredDeleted);
+    }
+
     const staffList = this.getStaffList();
     const updated = [newAdmin, ...staffList.filter((s) => s.email.toLowerCase() !== newAdmin.email.toLowerCase())];
     this.saveStaffList(updated);
@@ -1622,6 +1697,7 @@ class StorageService {
     this.setAuthenticated(true);
     this.setRegisterLocked(false);
     this.pushStaffToServer(updated);
+    this.pushStaffToFirestore(newAdmin).catch(() => {});
 
     this.addAuditLog('ADMIN_INITIALIZED', 'AUTH', `Primary Administrator ${newAdmin.name} configured.`);
     return newAdmin;

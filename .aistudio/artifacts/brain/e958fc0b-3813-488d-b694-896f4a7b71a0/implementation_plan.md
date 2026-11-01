@@ -1,120 +1,153 @@
-# Mobile Optimization Implementation Plan (375px Primary Baseline)
+# Fix User Persistence & Full A4 Invoice Receipt Generation
 
-## Project Context
-- **Project Type:** Point of Sale (POS), Inventory & Store Operations Web App (PWA)
-- **Stack:** React 19, TypeScript, Tailwind CSS v4, Express full-stack dev server (`tsx server.ts`), Firebase Firestore & Offline Storage
-- **Key Screens:** Login/Auth, POS Register, Inventory Management, Sales Ledger, Store Credit Accounts, Expense Tracker, Barcode & QR Studio, Analytics/Reports, Staff & Roles, Activity Audit Logs, Store Settings
-- **Must-Not-Change:** Brand palette (Forest Green `#064e3b`, Parchment `#fdfbf7`, Dim Dark `#12100e`, Emerald `#6ee7b7`), existing data structures, offline-first logic, desktop multi-column layouts and density
+## Summary
+Resolve the bug that causes newly registered staff and administrator accounts to be automatically removed upon creation or page reload, and implement a full A4 / Letter printable invoice receipt generator with PDF download and direct print capability accessible manually from the Sales Ledger.
 
 ---
 
-## 1. Audit Findings (Grouped by the 5 Categories)
+### User Review & Critical Decisions
 
-### Category 1: Wide Tables / Data Grids → Cards (< 640px)
-- **`src/views/InventoryView.tsx` (`InventoryView`):** 7-column table (`Select`, `Product Name/SKU/Category`, `Barcode/QR`, `Cost/Selling Price`, `Current Stock`, `Status`, `Actions`) forces severe horizontal page scrolling on screens under 640px.
-- **`src/views/SalesLedgerView.tsx` (`SalesLedgerView`):** 8-column table (`Receipt #`, `Date & Time`, `Cashier`, `Customer`, `Payment Split`, `Grand Total`, `Status`, `Actions`) forces horizontal swiping on mobile.
-- **`src/views/CreditAccountsView.tsx` (`CreditAccountsView`):** Customer Transaction Ledger table has 6 columns (`Date & Time`, `Type`, `Description`, `Amount`, `Balance After`, `Staff`) causing overflow in the mobile drawer/detail view.
-- **`src/views/ExpensesView.tsx` (`ExpensesView`):** 6-column table (`Date`, `Category`, `Description/Ref`, `Payment Method`, `Amount`, `Actions`) causes horizontal scroll on small viewports.
-- **`src/views/AuditLogsView.tsx` (`AuditLogsView`):** 5-column audit table (`Timestamp`, `Staff Member`, `Action`, `Category`, `Details`) overflows at 375px.
+> [!IMPORTANT]
+> The following product decisions were confirmed through interactive clarification and are locked into this plan:
 
-### Category 2: Large Numbers / KPIs / Badges Must Never Wrap
-- **`src/views/DashboardView.tsx` (`DashboardView`):**
-  - KPI summary metric cards (`grid grid-cols-2 lg:grid-cols-4`) contain currency values where the number and currency symbol (e.g., `ETB`) can wrap to two lines on 320px/375px screens.
-  - "Daily Highlights" card spotlight numbers lack `white-space: nowrap` and `font-variant-numeric: tabular-nums`.
-- **`src/views/PosRegisterView.tsx` (`PosRegisterView`):**
-  - Cart totals footer grand total (`{grandTotal.toFixed(2)} {settings.currency}`) can separate number from currency unit if wrapped.
-  - Mobile switcher tab button badge and subtotal (`Cart (X) • 1500 ETB`) can wrap onto two lines.
-- **`src/views/ReportsView.tsx` (`ReportsView`):**
-  - Financial metric cards (Revenue, COGS, Gross Profit, Store Credit) lack fluid `clamp()` sizing and `whitespace-nowrap` on currency text.
-- **`src/views/ExpensesView.tsx` (`ExpensesView`):**
-  - Total Expenses header banner (`{totalExpenseSum.toFixed(2)} {settings.currency}`) lacks `whitespace-nowrap`.
-- **`src/views/CreditAccountsView.tsx` (`CreditAccountsView`):**
-  - Customer directory debt tags and balance cards in statement header can wrap currency units on narrow viewports.
-
-### Category 3: Form Inputs: 16px Minimum + Correct Keyboard
-- **`index.html`:**
-  - `<meta name="viewport" ...>` currently contains `maximum-scale=1.0, user-scalable=no` (disables accessibility zoom) and lacks `viewport-fit=cover`.
-- **Global Input Font Size (`src/index.css`):**
-  - Many input, select, and textarea elements use `text-xs` (12px) or `text-sm` (14px). On iOS Safari, any field font size `< 16px` triggers automatic page zooming, distorting the mobile layout.
-- **Input Attributes:**
-  - `src/views/LoginView.tsx`: Missing `inputmode="email"`, `autocomplete="username"`, `enterkeyhint="next"`, and `autocomplete="current-password"`, `enterkeyhint="go"`. PIN input missing `inputmode="numeric" pattern="[0-9]*"`.
-  - `src/views/PosRegisterView.tsx`: Fast search input missing `type="search"`, `inputmode="search"`, `enterkeyhint="search"`.
-  - `src/views/InventoryView.tsx`: Search input missing `inputmode="search"`. Add/Edit product price & stock numeric inputs missing `inputmode="decimal"` and `inputmode="numeric"`.
-  - `src/views/CreditAccountsView.tsx`: Phone input missing `inputmode="tel"` and `autocomplete="tel"`. Repay input missing `inputmode="decimal"`.
-  - `src/views/ExpensesView.tsx`: Expense amount missing `inputmode="decimal"`.
-
-### Category 4: Touch Targets: 44px on Touch Devices Only
-- **`src/index.css`:**
-  - No `@media (pointer: coarse)` rule enforcing minimum 44px tap targets for buttons, icon triggers, checkboxes, and menu items on touch devices.
-- **Icon Buttons & Action Triggers:**
-  - Close buttons (`<X className="w-3.5 h-3.5" />`), clear search triggers, table action icons (`Edit`, `Trash2`, `Printer`, `RotateCcw`), and inventory item checkboxes are currently ~28–32px visual and hit size.
-  - Quantity stepper buttons (`+` and `-`) in `PosRegisterView` are ~24px without tap expansion on touch devices.
-- **Desktop Density Preservation:**
-  - When pointer is fine (`@media (pointer: fine)`), compact mouse UI must remain untouched.
-
-### Category 5: Fixed/Sticky Bars Must Not Hide Content
-- **`index.html`:**
-  - Missing `viewport-fit=cover` in `<meta name="viewport">`.
-- **`src/index.css` & `src/components/layout/MobileNav.tsx`:**
-  - Need explicit CSS safe-area variables (`env(safe-area-inset-bottom)`, `env(safe-area-inset-top)`).
-  - Ensure all scrollable views have clearance (`pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))]`) so the final card, button, or row is completely reachable above the bottom navigation bar.
-- **Modals & Flyouts:**
-  - `PinModal.tsx`, `CameraScannerModal.tsx`, `UserProfileModal.tsx`, and `MasterPasscodeSignupModal.tsx` need `max-h-[90dvh]` and safe-area padding to avoid being cut off by the mobile software keyboard.
+- **Confirmed Decision 1 (Receipt Format & Layout)**: Full A4 or Letter invoice layout with high-resolution PDF download and printable styling, replacing thermal-only slips with a professional business stationery tax invoice format.
+- **Confirmed Decision 2 (Trigger Workflow & Location)**: Receipts and tax invoices will be generated **manually from the Sales Ledger** on-demand (both from table action buttons and inside the Transaction Inspector modal), keeping the checkout POS terminal quick and uncluttered.
+- **Confirmed Decision 3 (User Retention & Persistence)**: Eliminate the premature wipe trigger in `syncStaffWithFirestore` and `syncStaffFromBackend` that was wiping newly created accounts whenever remote Firestore snapshots were empty or delayed by write quota limits.
 
 ---
 
-## 2. Targeted Fix Plan
+### 1. Overview & Core Concept
 
-### Step 1: Base Configuration & Global Mobile CSS Rules
-1. **`index.html`**:
-   - Update viewport meta tag: `<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />` (remove `user-scalable=no` / `maximum-scale=1.0`).
-2. **`src/index.css`**:
-   - Add `@media (max-width: 639px) { input, select, textarea { font-size: 16px !important; } }` to eliminate iOS Safari auto-zoom without affecting desktop sizing.
-   - Add `@media (pointer: coarse)` rules ensuring `min-height: 44px; min-width: 44px;` for buttons, links, and touch-target expands, while preserving desktop density under `pointer: fine`.
-   - Add `.tabular-kpi` utility ensuring `white-space: nowrap; font-variant-numeric: tabular-nums; font-size: clamp(1.25rem, 5vw, 1.875rem);`.
-   - Add safe-area utility variables for notch and home bar insets.
-
-### Step 2: Transform Wide Tables to Stacked Cards (< 640px)
-1. **`src/views/InventoryView.tsx`**:
-   - Add responsive card view below 640px (`block sm:hidden`): each product displayed as a compact tactile card with title/SKU, category, price tag, stock pill, and action buttons. Keep `hidden sm:table` for tablets/desktops.
-2. **`src/views/SalesLedgerView.tsx`**:
-   - Add responsive card list below 640px (`block sm:hidden`): receipt # + status badge on top, cashier & timestamp, items summary, grand total in bold nowrap, and quick action buttons. Keep table at `sm:`.
-3. **`src/views/CreditAccountsView.tsx`**:
-   - In transaction history, render stacked cards on `< sm` and standard table on `>= sm`.
-4. **`src/views/ExpensesView.tsx`**:
-   - Render expense records as cards on `< sm` and table on `>= sm`.
-5. **`src/views/AuditLogsView.tsx`**:
-   - Render audit events as structured cards on `< sm` and table on `>= sm`.
-
-### Step 3: Enforce Non-Wrapping Numbers & Fluid KPIs
-1. **`src/views/DashboardView.tsx`**:
-   - Enforce `whitespace-nowrap font-mono-numbers` on all metric cards and daily highlight spotlights. Apply `clamp()` font sizes.
-2. **`src/views/PosRegisterView.tsx`**:
-   - Ensure cart totals, discount tags, and top tab bar indicators never wrap or break currency symbols onto new lines.
-3. **`src/views/ReportsView.tsx`**:
-   - Wrap financial values in `whitespace-nowrap inline-flex items-baseline`.
-
-### Step 4: Correct Form Input Attributes & Keyboards
-1. **`src/views/LoginView.tsx`**:
-   - Add `inputmode="email"`, `autocomplete="username"`, `enterkeyhint="next"` to email field.
-   - Add `autocomplete="current-password"`, `enterkeyhint="go"` to password field.
-   - Add `inputmode="numeric" pattern="[0-9]*"` to PIN inputs.
-2. **`src/views/PosRegisterView.tsx` & `src/views/InventoryView.tsx`**:
-   - Add `type="search" inputmode="search" enterkeyhint="search"` to search bars.
-   - Add `inputmode="decimal"` and `inputmode="numeric"` to price and stock adjustment inputs.
-3. **`src/views/CreditAccountsView.tsx` & `src/views/ExpensesView.tsx`**:
-   - Add `type="tel" inputmode="tel" autocomplete="tel"` and `inputmode="decimal"` to phone and monetary fields.
-
-### Step 5: Touch Targets & Fixed Navigation Clearance
-1. **Hit Area Expansion**:
-   - Enhance steppers, icon buttons, and checkboxes with minimum 44px touch targets on touch devices.
-2. **Bottom Clearance & Safe Areas**:
-   - Verify all view scroll containers feature `pb-[calc(5rem+env(safe-area-inset-bottom,0px))]`.
-   - Update `MobileNav.tsx` with safe-area padding.
+- **What It Does**:
+  1. **User Account Permanence**: Guarantees that any staff or administrator account created (either locally, via server, or during initial setup) is permanently persisted in `localStorage` and synchronized with the backend. New accounts created after a wipe timestamp are protected from being discarded by empty Firestore snapshots or quota timeouts.
+  2. **Full A4 Invoice Receipt Generator**: Provides store operators with an official, print-ready A4/Letter invoice generator directly from the Sales Ledger. Each transaction can be previewed in an interactive A4 sheet modal, downloaded as an official PDF document via `jsPDF` and `jspdf-autotable`, or printed directly to any connected laser/inkjet printer.
+- **Target Audience**: Store owners, cashiers, and accountants at Sappy Stationary needing reliable staff login persistence and commercial-grade tax invoices for walk-in and corporate clients.
+- **Key Value**: Reliable, uninterrupted staff operations without unexpected account logouts, paired with professional corporate invoices that meet tax and accounting standards.
 
 ---
 
-## 3. Verification & Breakpoint Testing
-- Test across viewports: **320px** (iPhone SE 1st gen), **375px** (iPhone SE/13 mini / primary baseline), **414px** (iPhone XR/Plus), **768px** (iPad mini), and **1280px+** (Desktop).
-- Confirm zero horizontal page scroll at any width.
-- Run `lint_applet` and `compile_applet`.
+### 2. User Experience & Visual Design
+
+#### A. Key User Flows
+1. **User Creation & Login**:
+   - Administrator registers a new cashier/manager from the Staff screen or Initial Setup.
+   - Account is saved locally and synced to backend.
+   - On page refresh or navigation, the user profile and credentials persist permanently without disappearing.
+2. **Generating an A4 Invoice from Sales Ledger**:
+   - Operator navigates to **Sales Ledger** via sidebar or top navigation.
+   - In the sales transactions table, each row features a dedicated **"Invoice / Receipt"** button (alongside the quick PDF download icon).
+   - Clicking opens the **A4 Invoice Preview Modal**, rendering a realistic, scaled A4 document with authentic typography:
+     - Header: Sappy Stationary logo/wordmark, business tagline, TIN, full physical address, phone, and email.
+     - Document Title: Official Tax Invoice / Sales Receipt with invoice number, transaction date/time, and cashier ID.
+     - Customer Block: Walk-in customer or named client with phone and credit balance.
+     - Itemized Table: Description & SKU, Quantity, Unit, Unit Price, Line Discount, and Total.
+     - Financial Summary: Subtotal, VAT / Tax breakdown, Net Discount, Grand Total in ETB, and Payment Tendered breakdown (Cash, Card, Telebirr/CBE Mobile Transfer, Store Credit).
+     - Security & Footer: High-resolution QR verification code, barcode, payment status stamp ("PAID / COMPLETED"), return policy, and store signature/stamp line.
+   - Two prominent actions: **"Download PDF Invoice"** (saves high-res `.pdf`) and **"Print Document"** (triggers browser print stylesheet optimized for A4 paper).
+
+#### B. Visual Identity & Theme
+- **Document Aesthetic**: Clean, architectural Swiss-modern invoice design. Crisp typography (`Plus Jakarta Sans` / `Inter` headings, `JetBrains Mono` for tabular numerals and amounts).
+- **Color Discipline**: Deep Forest Green primary brand accent (`#064e3b`), dark neutral slate text (`#1e293b`), subtle warm-gray table grid borders (`#e2e8f0`), and crisp white sheet background.
+- **Print Optimization**: `@media print` CSS rules hiding background navigation, sidebars, and action buttons, focusing strictly on the centered A4 sheet with zero margin waste.
+
+---
+
+### 3. Key Product Decisions & Trade-Offs
+
+#### Decision 1: Root Cause & Fix for Automatic User Removal
+- **Problem Identified**:
+  1. In `src/services/storage.ts` (`syncStaffWithFirestore`), when Firestore returned an empty snapshot (`snapDocs.length === 0` or after filtering), it executed:
+     ```ts
+     this.saveStaffList([]);
+     localStorage.removeItem(STORAGE_KEYS.STORE_INITIALIZED);
+     ```
+     Because Firebase free-tier write quotas were exceeded, new accounts could not immediately write to Firestore, causing the remote collection to appear empty. The real-time listener then immediately wiped local users.
+  2. In `syncStaffFromBackend()` and `syncAllDataWithBackend()`, if `activeWipeTs > 0` and the server user list was temporarily empty, it unconditionally wiped local users without checking whether the local users were created *after* the wipe.
+- **Solution**:
+  - Update `syncStaffWithFirestore` so an empty remote list **never** deletes local users whose `createdAt` timestamp is greater than `wipeTs`.
+  - In `syncStaffFromBackend` and `syncAllDataWithBackend`, preserve all valid users with `createdAt > activeWipeTs`.
+  - When a user is added via `addStaffAccount`, push it directly to `/api/pos/sync` so the local server stores it immediately as a persistent source of truth.
+
+#### Decision 2: Pure Client-Side Vector PDF Generation (`jsPDF` + `autoTable`)
+- **Chosen Approach**: Use the installed `jspdf` and `jspdf-autotable` libraries in `ExportService` to generate crisp vector A4 documents that download instantly in under 150ms without server round-trips.
+- **Interactive UI Preview**: Provide an in-browser HTML/CSS A4 preview modal mirroring the exact PDF layout, allowing the user to inspect the invoice, copy details, or print immediately via `window.print()`.
+
+---
+
+### 4. Technical Architecture & Data Strategy
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                          SALES LEDGER VIEW                             │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │ Sales Table Rows: [Inspect] [Generate A4 Invoice] [Download PDF] │  │
+│  └───────────────────────────────┬──────────────────────────────────┘  │
+└──────────────────────────────────┼─────────────────────────────────────┘
+                                   │
+                                   ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                     A4 INVOICE PREVIEW MODAL                           │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │ A4 Document Sheet (CSS-rendered preview + @media print styles)   │  │
+│  │  - Store Header: Sappy Stationary & TIN                          │  │
+│  │  - Bill To / Customer Details                                    │  │
+│  │  - Itemized Sales Table (tabular-nums)                           │  │
+│  │  - Financial Summary (Subtotal, Tax, Discounts, Grand Total ETB) │  │
+│  │  - Payment Tender Splits & Cashier Signature                     │  │
+│  │  - Barcode & QR Verification Stamp                               │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │ Actions: [Download A4 PDF Invoice]  [Print Document]  [Close]    │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────┬─────────────────────────────────────┘
+                                   │
+                                   ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                        EXPORT SERVICE (jsPDF)                          │
+│  - ExportService.generateA4InvoicePDF(sale, settings)                  │
+│  - Generates official vector A4 PDF with exact margins and tables      │
+└────────────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────────────┐
+│                  STORAGE & USER PERSISTENCE PIPELINE                   │
+│                                                                        │
+│  storage.addStaffAccount(newStaff)                                     │
+│     │                                                                  │
+│     ├── 1. Writes to localStorage (safeguarded)                        │
+│     ├── 2. POST /api/pos/sync (persists to backend server immediately) │
+│     └── 3. Quota-safe Firestore write attempt                          │
+│                                                                        │
+│  syncStaffWithFirestore / syncStaffFromBackend                         │
+│     └── Checks: Does local user have createdAt > wipeTimestamp?        │
+│          ├── YES: PRESERVE local user! Never wipe by empty remote.     │
+│          └── NO: Only wipe if created before the wipe event.          │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 5. Implementation Steps
+
+1. **Fix User Persistence in `src/services/storage.ts`**:
+   - In `syncStaffWithFirestore`: Remove the destructive `else { this.saveStaffList([]); }` branch. Instead, check if local staff have `createdAt > wipeTs`; if so, preserve them and push them to the server.
+   - In `syncStaffFromBackend`: Only wipe local staff if **all** existing local staff have `createdAt <= activeWipeTs`. If valid newer staff exist, keep them and push them to the backend.
+   - In `syncAllDataWithBackend`: Prevent clearing local staff when valid accounts exist.
+   - In `addStaffAccount`: Ensure new staff timestamps are set to current `Date.now()` and immediately pushed to `/api/pos/sync`.
+2. **Build Full A4 Invoice Generator in `src/services/export.ts`**:
+   - Implement `generateA4InvoicePDF(sale: Sale, settings: StoreSettings)` using standard A4 dimensions ($210\text{mm} \times 297\text{mm}$).
+   - Render clean header, invoice metadata, customer block, tabular autoTable with currency alignment, subtotal, tax breakdown, discount, total, payment breakdown, and QR/barcode stamp.
+3. **Create `A4InvoiceModal.tsx` in `src/components/pos/`**:
+   - Provide a responsive, high-fidelity A4 document modal with zoom/fit controls, clean print stylesheet, and direct "Download PDF" and "Print Invoice" buttons.
+4. **Wire A4 Invoice Actions into `src/views/SalesLedgerView.tsx`**:
+   - Add a "Generate Invoice" action on each sale row and inside the existing Transaction Inspector modal.
+   - Connect click handlers to open `A4InvoiceModal` with the selected sale.
+5. **Verification & Resolution**:
+   - Fixed obsolete unconditional purge hook in `init()` (`src/services/storage.ts`) that previously wiped all staff on new tabs or sessions.
+   - Hardened `getStaffList()` and `saveStaffList()` to only exclude accounts that are explicitly registered in `deletedUserIds` with no re-creation timestamp, never dropping active accounts or the logged-in user.
+   - Eliminated destructive `this.saveStaffList([])` and `resetAllUsersLocally()` calls in `syncStaffWithFirestore`, `mergeRemoteStaff`, `syncStaffFromBackend`, and `syncAllDataWithBackend`.
+   - Updated `mergeServerUsersWithLocal` to perform a non-destructive bidirectional union so local accounts created offline or during sync transitions are never overwritten.
+   - Hardened `server.ts` (`GET /api/auth/system-status` and `POST /api/pos/sync`) so valid accounts are never purged based solely on legacy wipe timestamps.
+   - Hardened `LoginView.tsx` `subscribeAutoSync` listener to fall back to local stored staff before clearing form inputs or switching tabs.
+   - Built full A4 / Letter tax invoice generator (`generateA4InvoicePDF` in `src/services/export.ts`) and interactive preview modal (`A4InvoiceModal.tsx`) accessible from the Sales Ledger.
+   - Tested and verified with `lint_applet` (0 errors), `compile_applet` (build succeeded), and live server API verification.
+

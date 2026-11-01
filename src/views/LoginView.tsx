@@ -187,14 +187,14 @@ export const LoginView: React.FC<LoginViewProps> = ({onLoginSuccess, isOnline}) 
       if (!isMounted) return;
       storage.syncStaffFromBackend().then((res) => {
         if (!isMounted) return;
-        if (res.staffList.length > 0) {
+        if (res.staffList && res.staffList.length > 0) {
           const activeStaff = res.staffList.filter((s) => s.active && s.approvalStatus !== 'pending');
           setStaffList(activeStaff);
         } else {
-          setStaffList([]);
-          setSelectedStaffId('');
-          setUsername('');
-          setActiveAuthTab('signup');
+          const localActive = storage.getStaffList().filter((s) => s.active && s.approvalStatus !== 'pending');
+          if (localActive.length > 0) {
+            setStaffList(localActive);
+          }
         }
       });
     });
