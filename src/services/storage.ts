@@ -287,6 +287,24 @@ class StorageService {
     return Math.max(cat, wipe);
   }
 
+  isRecordValidAfterWipe(item: any, wipeTs: number): boolean {
+    if (wipeTs <= 0) return true;
+    if (!item) return false;
+    let t = 0;
+    if (typeof item === 'string' || typeof item === 'number') {
+      t = new Date(item).getTime();
+    } else {
+      t = Math.max(
+        item.updatedDate ? new Date(item.updatedDate).getTime() : 0,
+        item.createdDate ? new Date(item.createdDate).getTime() : 0,
+        item.date ? new Date(item.date).getTime() : 0,
+        item.timestamp ? new Date(item.timestamp).getTime() : 0,
+        item.createdAt ? new Date(item.createdAt).getTime() : 0
+      );
+    }
+    return t > wipeTs;
+  }
+
   // --- Deleted Users Tombstone Registry (Cross-Device Deletion & Reset Persistence) ---
   getDeletedUserIds(): string[] {
     if (!this.isBrowser()) return [];
@@ -1620,7 +1638,16 @@ class StorageService {
     if (!this.isBrowser()) return INITIAL_PRODUCTS;
     try {
       const val = localStorage.getItem(STORAGE_KEYS.PRODUCTS);
-      return val ? JSON.parse(val) : INITIAL_PRODUCTS;
+      const list: Product[] = val ? JSON.parse(val) : INITIAL_PRODUCTS;
+      const wipeTs = this.getCatalogWipeTimestamp();
+      if (wipeTs > 0) {
+        const valid = list.filter((p) => this.isRecordValidAfterWipe(p, wipeTs));
+        if (valid.length !== list.length) {
+          localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(valid));
+        }
+        return valid;
+      }
+      return list;
     } catch {
       return INITIAL_PRODUCTS;
     }
@@ -1753,18 +1780,23 @@ class StorageService {
   }
 
   mergeRemoteProducts(remoteProducts: Product[], onUpdate?: (products: Product[]) => void): Product[] {
+    const wipeTs = this.getCatalogWipeTimestamp();
+    const validRemote = wipeTs > 0
+      ? remoteProducts.filter((p) => this.isRecordValidAfterWipe(p, wipeTs))
+      : remoteProducts;
+
     const localProducts = this.getProducts();
 
     // Map remote products by id
     const remoteMap = new Map<string, Product>();
-    remoteProducts.forEach((p) => remoteMap.set(p.id, p));
+    validRemote.forEach((p) => remoteMap.set(p.id, p));
 
     // Check if there are local products that don't exist in remote Firestore yet
     const missingInRemote: Product[] = [];
     localProducts.forEach((local) => {
       if (!remoteMap.has(local.id)) {
         // Also check if SKU matches an existing remote item
-        const skuMatch = remoteProducts.find(
+        const skuMatch = validRemote.find(
           (r) => r.sku && local.sku && r.sku.toLowerCase() === local.sku.toLowerCase()
         );
         if (!skuMatch) {
@@ -1778,9 +1810,8 @@ class StorageService {
       this.pushProductsBatchToFirestore(missingInRemote).catch(() => {});
     }
 
-    // Merged list: remote products plus any local items pending upload
-    const merged: Product[] = [...remoteProducts];
-    missingInRemote.forEach((missing) => merged.push(missing));
+    // Merged list: valid remote products plus any local items pending upload
+    const merged: Product[] = [...validRemote, ...missingInRemote];
 
     this.saveProductsLocally(merged);
 
@@ -1794,25 +1825,27 @@ class StorageService {
   syncProductsWithFirestore(onUpdate?: (products: Product[]) => void): () => void {
     if (!this.isBrowser()) return () => {};
 
+    const handleDocs = (snapDocs: any[]) => {
+      const wipeTs = this.getCatalogWipeTimestamp();
+      const remoteProds: Product[] = [];
+      snapDocs.forEach((docSnap) => {
+        const p = this.mapFirestoreDocToProduct(docSnap.id, docSnap.data());
+        if (this.isRecordValidAfterWipe(p, wipeTs)) {
+          remoteProds.push(p);
+        }
+      });
+
+      if (remoteProds.length > 0) {
+        this.mergeRemoteProducts(remoteProds, onUpdate);
+      } else {
+        localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify([]));
+        if (onUpdate) onUpdate([]);
+      }
+    };
+
     // 1. Immediate fetch on mount
     getDocs(collection(db, 'products'))
-      .then((snap) => {
-        const remoteProds: Product[] = [];
-        snap.forEach((docSnap) => {
-          remoteProds.push(this.mapFirestoreDocToProduct(docSnap.id, docSnap.data()));
-        });
-
-        if (remoteProds.length > 0) {
-          this.mergeRemoteProducts(remoteProds, onUpdate);
-        } else {
-          // If Firestore is empty, respect the reset state and clear local products
-          const wipeTs = Number(localStorage.getItem('sappy_last_known_wipe_ts') || 0);
-          if (wipeTs > 0) {
-            localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify([]));
-            if (onUpdate) onUpdate([]);
-          }
-        }
-      })
+      .then((snap) => handleDocs(snap.docs))
       .catch((err) => {
         console.warn('Initial Firestore products sync notice:', err);
       });
@@ -1820,20 +1853,7 @@ class StorageService {
     // 2. Real-time live listener for cross-device updates
     const unsubscribe = onSnapshot(
       collection(db, 'products'),
-      (snap) => {
-        const remoteProds: Product[] = [];
-        snap.forEach((docSnap) => {
-          remoteProds.push(this.mapFirestoreDocToProduct(docSnap.id, docSnap.data()));
-        });
-
-        if (remoteProds.length > 0) {
-          this.mergeRemoteProducts(remoteProds, onUpdate);
-        } else {
-          // If Firestore was wiped or emptied remotely, clear local products across all devices
-          localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify([]));
-          if (onUpdate) onUpdate([]);
-        }
-      },
+      (snap) => handleDocs(snap.docs),
       (err) => {
         console.warn('Firestore real-time products sync notice:', err);
       }
@@ -2263,7 +2283,16 @@ class StorageService {
     if (!this.isBrowser()) return [];
     try {
       const val = localStorage.getItem(STORAGE_KEYS.SALES);
-      return val ? JSON.parse(val) : [];
+      const list: Sale[] = val ? JSON.parse(val) : [];
+      const wipeTs = this.getCatalogWipeTimestamp();
+      if (wipeTs > 0) {
+        const valid = list.filter((s) => this.isRecordValidAfterWipe(s, wipeTs));
+        if (valid.length !== list.length) {
+          localStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify(valid));
+        }
+        return valid;
+      }
+      return list;
     } catch {
       return [];
     }
@@ -2287,38 +2316,33 @@ class StorageService {
   syncSalesWithFirestore(onUpdate?: (sales: Sale[]) => void): () => void {
     if (!this.isBrowser()) return () => {};
 
-    getDocs(collection(db, 'sales'))
-      .then((snap) => {
-        const remoteSales: Sale[] = [];
-        snap.forEach((d) => remoteSales.push(d.data() as Sale));
-        if (remoteSales.length > 0) {
-          remoteSales.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-          this.saveSales(remoteSales);
-          if (onUpdate) onUpdate(remoteSales);
-        } else {
-          const wipeTs = Number(localStorage.getItem('sappy_last_known_wipe_ts') || 0);
-          if (wipeTs > 0) {
-            localStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify([]));
-            if (onUpdate) onUpdate([]);
-          }
+    const handleSalesDocs = (docs: any[]) => {
+      const wipeTs = this.getCatalogWipeTimestamp();
+      const remoteSales: Sale[] = [];
+      docs.forEach((d) => {
+        const sale = d.data() as Sale;
+        if (this.isRecordValidAfterWipe(sale, wipeTs)) {
+          remoteSales.push(sale);
         }
-      })
+      });
+
+      if (remoteSales.length > 0) {
+        remoteSales.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        this.saveSales(remoteSales);
+        if (onUpdate) onUpdate(remoteSales);
+      } else {
+        localStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify([]));
+        if (onUpdate) onUpdate([]);
+      }
+    };
+
+    getDocs(collection(db, 'sales'))
+      .then((snap) => handleSalesDocs(snap.docs))
       .catch((err) => console.warn('Initial Firestore sales sync notice:', err));
 
     const unsubscribe = onSnapshot(
       collection(db, 'sales'),
-      (snap) => {
-        const remoteSales: Sale[] = [];
-        snap.forEach((d) => remoteSales.push(d.data() as Sale));
-        if (remoteSales.length > 0) {
-          remoteSales.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-          this.saveSales(remoteSales);
-          if (onUpdate) onUpdate(remoteSales);
-        } else {
-          localStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify([]));
-          if (onUpdate) onUpdate([]);
-        }
-      },
+      (snap) => handleSalesDocs(snap.docs),
       (err) => console.warn('Firestore real-time sales sync notice:', err)
     );
 
@@ -2475,7 +2499,16 @@ class StorageService {
     if (!this.isBrowser()) return INITIAL_CUSTOMERS;
     try {
       const val = localStorage.getItem(STORAGE_KEYS.CUSTOMERS);
-      return val ? JSON.parse(val) : INITIAL_CUSTOMERS;
+      const list: Customer[] = val ? JSON.parse(val) : INITIAL_CUSTOMERS;
+      const wipeTs = this.getCatalogWipeTimestamp();
+      if (wipeTs > 0) {
+        const valid = list.filter((c) => this.isRecordValidAfterWipe(c, wipeTs));
+        if (valid.length !== list.length) {
+          localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(valid));
+        }
+        return valid;
+      }
+      return list;
     } catch {
       return INITIAL_CUSTOMERS;
     }
@@ -2508,36 +2541,32 @@ class StorageService {
   syncCustomersWithFirestore(onUpdate?: (customers: Customer[]) => void): () => void {
     if (!this.isBrowser()) return () => {};
 
-    getDocs(collection(db, 'customers'))
-      .then((snap) => {
-        const remoteCustomers: Customer[] = [];
-        snap.forEach((d) => remoteCustomers.push(d.data() as Customer));
-        if (remoteCustomers.length > 0) {
-          localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(remoteCustomers));
-          if (onUpdate) onUpdate(remoteCustomers);
-        } else {
-          const wipeTs = Number(localStorage.getItem('sappy_last_known_wipe_ts') || 0);
-          if (wipeTs > 0) {
-            localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify([]));
-            if (onUpdate) onUpdate([]);
-          }
+    const handleCustDocs = (docs: any[]) => {
+      const wipeTs = this.getCatalogWipeTimestamp();
+      const remoteCustomers: Customer[] = [];
+      docs.forEach((d) => {
+        const c = d.data() as Customer;
+        if (this.isRecordValidAfterWipe(c, wipeTs)) {
+          remoteCustomers.push(c);
         }
-      })
+      });
+
+      if (remoteCustomers.length > 0) {
+        localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(remoteCustomers));
+        if (onUpdate) onUpdate(remoteCustomers);
+      } else {
+        localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify([]));
+        if (onUpdate) onUpdate([]);
+      }
+    };
+
+    getDocs(collection(db, 'customers'))
+      .then((snap) => handleCustDocs(snap.docs))
       .catch((err) => console.warn('Initial Firestore customers sync notice:', err));
 
     const unsubscribe = onSnapshot(
       collection(db, 'customers'),
-      (snap) => {
-        const remoteCustomers: Customer[] = [];
-        snap.forEach((d) => remoteCustomers.push(d.data() as Customer));
-        if (remoteCustomers.length > 0) {
-          localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(remoteCustomers));
-          if (onUpdate) onUpdate(remoteCustomers);
-        } else {
-          localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify([]));
-          if (onUpdate) onUpdate([]);
-        }
-      },
+      (snap) => handleCustDocs(snap.docs),
       (err) => console.warn('Firestore real-time customers sync notice:', err)
     );
 
@@ -2587,38 +2616,33 @@ class StorageService {
   syncCreditTransactionsWithFirestore(onUpdate?: (txs: CreditTransaction[]) => void): () => void {
     if (!this.isBrowser()) return () => {};
 
-    getDocs(collection(db, 'credit_transactions'))
-      .then((snap) => {
-        const remoteTxs: CreditTransaction[] = [];
-        snap.forEach((d) => remoteTxs.push(d.data() as CreditTransaction));
-        if (remoteTxs.length > 0) {
-          remoteTxs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-          localStorage.setItem(STORAGE_KEYS.CREDIT_TXS, JSON.stringify(remoteTxs));
-          if (onUpdate) onUpdate(remoteTxs);
-        } else {
-          const wipeTs = Number(localStorage.getItem('sappy_last_known_wipe_ts') || 0);
-          if (wipeTs > 0) {
-            localStorage.setItem(STORAGE_KEYS.CREDIT_TXS, JSON.stringify([]));
-            if (onUpdate) onUpdate([]);
-          }
+    const handleCreditDocs = (docs: any[]) => {
+      const wipeTs = this.getCatalogWipeTimestamp();
+      const remoteTxs: CreditTransaction[] = [];
+      docs.forEach((d) => {
+        const tx = d.data() as CreditTransaction;
+        if (this.isRecordValidAfterWipe(tx, wipeTs)) {
+          remoteTxs.push(tx);
         }
-      })
+      });
+
+      if (remoteTxs.length > 0) {
+        remoteTxs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        localStorage.setItem(STORAGE_KEYS.CREDIT_TXS, JSON.stringify(remoteTxs));
+        if (onUpdate) onUpdate(remoteTxs);
+      } else {
+        localStorage.setItem(STORAGE_KEYS.CREDIT_TXS, JSON.stringify([]));
+        if (onUpdate) onUpdate([]);
+      }
+    };
+
+    getDocs(collection(db, 'credit_transactions'))
+      .then((snap) => handleCreditDocs(snap.docs))
       .catch((err) => console.warn('Initial Firestore credit tx sync notice:', err));
 
     const unsubscribe = onSnapshot(
       collection(db, 'credit_transactions'),
-      (snap) => {
-        const remoteTxs: CreditTransaction[] = [];
-        snap.forEach((d) => remoteTxs.push(d.data() as CreditTransaction));
-        if (remoteTxs.length > 0) {
-          remoteTxs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-          localStorage.setItem(STORAGE_KEYS.CREDIT_TXS, JSON.stringify(remoteTxs));
-          if (onUpdate) onUpdate(remoteTxs);
-        } else {
-          localStorage.setItem(STORAGE_KEYS.CREDIT_TXS, JSON.stringify([]));
-          if (onUpdate) onUpdate([]);
-        }
-      },
+      (snap) => handleCreditDocs(snap.docs),
       (err) => console.warn('Firestore real-time credit tx sync notice:', err)
     );
 
@@ -2630,7 +2654,15 @@ class StorageService {
     try {
       const val = localStorage.getItem(STORAGE_KEYS.CREDIT_TXS);
       const all: CreditTransaction[] = val ? JSON.parse(val) : [];
-      return customerId ? all.filter((t) => t.customerId === customerId) : all;
+      const wipeTs = this.getCatalogWipeTimestamp();
+      let valid = all;
+      if (wipeTs > 0) {
+        valid = all.filter((t) => this.isRecordValidAfterWipe(t, wipeTs));
+        if (valid.length !== all.length) {
+          localStorage.setItem(STORAGE_KEYS.CREDIT_TXS, JSON.stringify(valid));
+        }
+      }
+      return customerId ? valid.filter((t) => t.customerId === customerId) : valid;
     } catch {
       return [];
     }
@@ -2753,38 +2785,33 @@ class StorageService {
   syncExpensesWithFirestore(onUpdate?: (expenses: StoreExpense[]) => void): () => void {
     if (!this.isBrowser()) return () => {};
 
-    getDocs(collection(db, 'expenses'))
-      .then((snap) => {
-        const remoteExpenses: StoreExpense[] = [];
-        snap.forEach((d) => remoteExpenses.push(d.data() as StoreExpense));
-        if (remoteExpenses.length > 0) {
-          remoteExpenses.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-          localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(remoteExpenses));
-          if (onUpdate) onUpdate(remoteExpenses);
-        } else {
-          const wipeTs = Number(localStorage.getItem('sappy_last_known_wipe_ts') || 0);
-          if (wipeTs > 0) {
-            localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify([]));
-            if (onUpdate) onUpdate([]);
-          }
+    const handleExpDocs = (docs: any[]) => {
+      const wipeTs = this.getCatalogWipeTimestamp();
+      const remoteExpenses: StoreExpense[] = [];
+      docs.forEach((d) => {
+        const exp = d.data() as StoreExpense;
+        if (this.isRecordValidAfterWipe(exp, wipeTs)) {
+          remoteExpenses.push(exp);
         }
-      })
+      });
+
+      if (remoteExpenses.length > 0) {
+        remoteExpenses.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(remoteExpenses));
+        if (onUpdate) onUpdate(remoteExpenses);
+      } else {
+        localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify([]));
+        if (onUpdate) onUpdate([]);
+      }
+    };
+
+    getDocs(collection(db, 'expenses'))
+      .then((snap) => handleExpDocs(snap.docs))
       .catch((err) => console.warn('Initial Firestore expenses sync notice:', err));
 
     const unsubscribe = onSnapshot(
       collection(db, 'expenses'),
-      (snap) => {
-        const remoteExpenses: StoreExpense[] = [];
-        snap.forEach((d) => remoteExpenses.push(d.data() as StoreExpense));
-        if (remoteExpenses.length > 0) {
-          remoteExpenses.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-          localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(remoteExpenses));
-          if (onUpdate) onUpdate(remoteExpenses);
-        } else {
-          localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify([]));
-          if (onUpdate) onUpdate([]);
-        }
-      },
+      (snap) => handleExpDocs(snap.docs),
       (err) => console.warn('Firestore real-time expenses sync notice:', err)
     );
 
@@ -2795,7 +2822,16 @@ class StorageService {
     if (!this.isBrowser()) return [];
     try {
       const val = localStorage.getItem(STORAGE_KEYS.EXPENSES);
-      return val ? JSON.parse(val) : [];
+      const list: StoreExpense[] = val ? JSON.parse(val) : [];
+      const wipeTs = this.getCatalogWipeTimestamp();
+      if (wipeTs > 0) {
+        const valid = list.filter((e) => this.isRecordValidAfterWipe(e, wipeTs));
+        if (valid.length !== list.length) {
+          localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(valid));
+        }
+        return valid;
+      }
+      return list;
     } catch {
       return [];
     }
@@ -3193,6 +3229,32 @@ class StorageService {
   async clearAllFirestoreData(wipeTimestamp: number = Date.now()): Promise<void> {
     if (this.isFirestoreQuotaExceeded) return;
     try {
+      // 1. Write authoritative wipe signal to system/meta in Firestore FIRST
+      await Promise.race([
+        setDoc(
+          doc(db, 'system', 'meta'),
+          {
+            lastWipeTimestamp: wipeTimestamp,
+            lastCatalogWipeTimestamp: wipeTimestamp,
+            isWiped: true,
+            isInitialized: false,
+            wipeType: 'full',
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: false }
+        ),
+        new Promise((resolve) => setTimeout(resolve, 1500)),
+      ]);
+
+      if (this.isFirestoreQuotaExceeded) return;
+
+      // 2. Reset settings to defaults in Firestore
+      await Promise.race([
+        setDoc(doc(db, 'settings', 'store'), DEFAULT_SETTINGS, { merge: false }),
+        new Promise((resolve) => setTimeout(resolve, 1500)),
+      ]);
+
+      // 3. Clear collections with bounded safety timeout (quota-safe)
       await Promise.race([
         Promise.all([
           this.clearFirestoreCollection('users'),
@@ -3203,31 +3265,7 @@ class StorageService {
           this.clearFirestoreCollection('expenses'),
           this.clearFirestoreCollection('audit_logs'),
         ]),
-        new Promise((resolve) => setTimeout(resolve, 3000)),
-      ]);
-
-      if (this.isFirestoreQuotaExceeded) return;
-
-      // Reset settings to defaults in Firestore
-      await Promise.race([
-        setDoc(doc(db, 'settings', 'store'), DEFAULT_SETTINGS, { merge: false }),
-        new Promise((resolve) => setTimeout(resolve, 1500)),
-      ]);
-
-      // Write authoritative wipe signal to system/meta in Firestore
-      await Promise.race([
-        setDoc(
-          doc(db, 'system', 'meta'),
-          {
-            lastWipeTimestamp: wipeTimestamp,
-            isWiped: true,
-            isInitialized: false,
-            wipeType: 'full',
-            updatedAt: new Date().toISOString(),
-          },
-          { merge: false }
-        ),
-        new Promise((resolve) => setTimeout(resolve, 1500)),
+        new Promise((resolve) => setTimeout(resolve, 2500)),
       ]);
     } catch (err) {
       if (this.handleFirestoreQuotaError(err)) return;
@@ -3238,15 +3276,17 @@ class StorageService {
   async clearCatalogFirestoreData(options?: { resetSettings?: boolean }, wipeTimestamp: number = Date.now()): Promise<void> {
     if (this.isFirestoreQuotaExceeded) return;
     try {
+      // 1. Write authoritative wipe signal to system/meta FIRST
       await Promise.race([
-        Promise.all([
-          this.clearFirestoreCollection('products'),
-          this.clearFirestoreCollection('sales'),
-          this.clearFirestoreCollection('customers'),
-          this.clearFirestoreCollection('credit_transactions'),
-          this.clearFirestoreCollection('expenses'),
-        ]),
-        new Promise((resolve) => setTimeout(resolve, 3000)),
+        setDoc(
+          doc(db, 'system', 'meta'),
+          {
+            lastCatalogWipeTimestamp: wipeTimestamp,
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        ),
+        new Promise((resolve) => setTimeout(resolve, 1500)),
       ]);
 
       if (this.isFirestoreQuotaExceeded) return;
@@ -3258,20 +3298,16 @@ class StorageService {
         ]);
       }
 
+      // 2. Clear catalog collections
       await Promise.race([
-        setDoc(
-          doc(db, 'system', 'meta'),
-          {
-            lastWipeTimestamp: wipeTimestamp,
-            lastCatalogWipeTimestamp: wipeTimestamp,
-            isWiped: true,
-            isInitialized: true,
-            wipeType: 'catalog_only',
-            updatedAt: new Date().toISOString(),
-          },
-          { merge: true }
-        ),
-        new Promise((resolve) => setTimeout(resolve, 1500)),
+        Promise.all([
+          this.clearFirestoreCollection('products'),
+          this.clearFirestoreCollection('sales'),
+          this.clearFirestoreCollection('customers'),
+          this.clearFirestoreCollection('credit_transactions'),
+          this.clearFirestoreCollection('expenses'),
+        ]),
+        new Promise((resolve) => setTimeout(resolve, 2500)),
       ]);
     } catch (err) {
       if (this.handleFirestoreQuotaError(err)) return;
@@ -3312,32 +3348,47 @@ class StorageService {
   syncSystemMetaWithFirestore(onWipeDetected?: (wipeType: string, ts: number) => void): () => void {
     if (!this.isBrowser()) return () => {};
 
+    const handleMeta = (data: any) => {
+      if (!data) return;
+      const remoteWipeTs = Number(data?.lastWipeTimestamp || 0);
+      const remoteCatalogWipeTs = Number(data?.lastCatalogWipeTimestamp || remoteWipeTs);
+      const localKnownWipeTs = Number(localStorage.getItem('sappy_last_known_wipe_ts') || 0);
+      const localKnownCatalogWipeTs = Number(localStorage.getItem('sappy_last_catalog_wipe_ts') || 0);
+
+      let wiped = false;
+      if (remoteWipeTs > 0 && remoteWipeTs > localKnownWipeTs) {
+        localStorage.setItem('sappy_last_known_wipe_ts', String(remoteWipeTs));
+        wiped = true;
+      }
+      if (remoteCatalogWipeTs > 0 && remoteCatalogWipeTs > localKnownCatalogWipeTs) {
+        localStorage.setItem('sappy_last_catalog_wipe_ts', String(remoteCatalogWipeTs));
+        wiped = true;
+      }
+
+      if (wiped) {
+        const wipeType = data?.wipeType || (remoteWipeTs > 0 ? 'full' : 'catalog_only');
+        if (wipeType === 'catalog_only') {
+          this.wipeCatalogLocally();
+        } else if (wipeType === 'staff_only') {
+          this.resetAllUsersLocally();
+        } else {
+          this.factoryResetEverythingLocally();
+        }
+        if (onWipeDetected) onWipeDetected(wipeType, Math.max(remoteWipeTs, remoteCatalogWipeTs));
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('sappy-cross-device-wipe', {
+              detail: { wipeType, timestamp: Math.max(remoteWipeTs, remoteCatalogWipeTs) },
+            })
+          );
+        }
+      }
+    };
+
     getDoc(doc(db, 'system', 'meta'))
       .then((snap) => {
         if (!snap.exists()) return;
-        const data = snap.data();
-        const remoteWipeTs = Number(data?.lastWipeTimestamp || 0);
-        const localKnownWipeTs = Number(localStorage.getItem('sappy_last_known_wipe_ts') || 0);
-
-        if (remoteWipeTs > 0 && remoteWipeTs > localKnownWipeTs) {
-          localStorage.setItem('sappy_last_known_wipe_ts', String(remoteWipeTs));
-          const wipeType = data?.wipeType || 'full';
-          if (wipeType === 'catalog_only') {
-            this.wipeCatalogLocally();
-          } else if (wipeType === 'staff_only') {
-            this.resetAllUsersLocally();
-          } else {
-            this.factoryResetEverythingLocally();
-          }
-          if (onWipeDetected) onWipeDetected(wipeType, remoteWipeTs);
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(
-              new CustomEvent('sappy-cross-device-wipe', {
-                detail: { wipeType, timestamp: remoteWipeTs },
-              })
-            );
-          }
-        }
+        handleMeta(snap.data());
       })
       .catch((err) => console.warn('Initial system meta check notice:', err));
 
@@ -3345,29 +3396,7 @@ class StorageService {
       doc(db, 'system', 'meta'),
       (snap) => {
         if (!snap.exists()) return;
-        const data = snap.data();
-        const remoteWipeTs = Number(data?.lastWipeTimestamp || 0);
-        const localKnownWipeTs = Number(localStorage.getItem('sappy_last_known_wipe_ts') || 0);
-
-        if (remoteWipeTs > 0 && remoteWipeTs > localKnownWipeTs) {
-          localStorage.setItem('sappy_last_known_wipe_ts', String(remoteWipeTs));
-          const wipeType = data?.wipeType || 'full';
-          if (wipeType === 'catalog_only') {
-            this.wipeCatalogLocally();
-          } else if (wipeType === 'staff_only') {
-            this.resetAllUsersLocally();
-          } else {
-            this.factoryResetEverythingLocally();
-          }
-          if (onWipeDetected) onWipeDetected(wipeType, remoteWipeTs);
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(
-              new CustomEvent('sappy-cross-device-wipe', {
-                detail: { wipeType, timestamp: remoteWipeTs },
-              })
-            );
-          }
-        }
+        handleMeta(snap.data());
       },
       (err) => console.warn('Real-time system meta wipe listener notice:', err)
     );
@@ -3397,6 +3426,7 @@ class StorageService {
     if (!this.isBrowser()) return;
     const now = Date.now();
     localStorage.setItem('sappy_last_known_wipe_ts', String(now));
+    localStorage.setItem('sappy_last_catalog_wipe_ts', String(now));
 
     // 1. Wipe local catalog immediately so UI updates instantly
     this.wipeCatalogLocally(options);
@@ -3444,8 +3474,12 @@ class StorageService {
   factoryResetEverythingLocally() {
     if (!this.isBrowser()) return;
     const knownWipeTs = localStorage.getItem('sappy_last_known_wipe_ts') || String(Date.now());
+    const knownCatalogWipeTs = localStorage.getItem('sappy_last_catalog_wipe_ts') || knownWipeTs;
+    const deletedUserIds = localStorage.getItem('sappy_deleted_user_ids') || '[]';
     localStorage.clear();
     localStorage.setItem('sappy_last_known_wipe_ts', knownWipeTs);
+    localStorage.setItem('sappy_last_catalog_wipe_ts', knownCatalogWipeTs);
+    localStorage.setItem('sappy_deleted_user_ids', deletedUserIds);
     localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify([]));
     localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify([]));
     localStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify([]));
@@ -3473,6 +3507,7 @@ class StorageService {
     const now = Date.now();
     if (this.isBrowser()) {
       localStorage.setItem('sappy_last_known_wipe_ts', String(now));
+      localStorage.setItem('sappy_last_catalog_wipe_ts', String(now));
     }
 
     // 1. Wipe local device storage and credentials FIRST for immediate resilience

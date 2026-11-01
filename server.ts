@@ -1136,7 +1136,13 @@ app.post('/api/pos/sync', (req: Request, res: Response) => {
 
 // Products CRUD
 app.get('/api/products', (req: Request, res: Response) => {
-  res.json({ success: true, products: loadStoredProducts() });
+  const meta = loadSystemMeta();
+  const catalogWipeTs = Number(meta.lastCatalogWipeTimestamp || meta.lastWipeTimestamp || 0);
+  const raw = loadStoredProducts();
+  const products = catalogWipeTs > 0
+    ? raw.filter((p: any) => Math.max(p.updatedDate ? new Date(p.updatedDate).getTime() : 0, p.createdDate ? new Date(p.createdDate).getTime() : 0) > catalogWipeTs)
+    : raw;
+  res.json({ success: true, products });
 });
 
 app.post('/api/products/save', (req: Request, res: Response) => {
@@ -1171,7 +1177,13 @@ app.delete('/api/products/:id', (req: Request, res: Response) => {
 
 // Sales & Refunds
 app.get('/api/sales', (req: Request, res: Response) => {
-  res.json({ success: true, sales: loadStoredSales() });
+  const meta = loadSystemMeta();
+  const catalogWipeTs = Number(meta.lastCatalogWipeTimestamp || meta.lastWipeTimestamp || 0);
+  const raw = loadStoredSales();
+  const sales = catalogWipeTs > 0
+    ? raw.filter((s: any) => (s.date ? new Date(s.date).getTime() : 0) > catalogWipeTs)
+    : raw;
+  res.json({ success: true, sales });
 });
 
 app.post('/api/sales/record', (req: Request, res: Response) => {
@@ -1234,7 +1246,13 @@ app.post('/api/sales/:id/refund', (req: Request, res: Response) => {
 
 // Customers
 app.get('/api/customers', (req: Request, res: Response) => {
-  res.json({ success: true, customers: loadStoredCustomers() });
+  const meta = loadSystemMeta();
+  const catalogWipeTs = Number(meta.lastCatalogWipeTimestamp || meta.lastWipeTimestamp || 0);
+  const raw = loadStoredCustomers();
+  const customers = catalogWipeTs > 0
+    ? raw.filter((c: any) => (c.createdAt ? new Date(c.createdAt).getTime() : 0) > catalogWipeTs)
+    : raw;
+  res.json({ success: true, customers });
 });
 
 app.post('/api/customers/save', (req: Request, res: Response) => {
@@ -1259,7 +1277,13 @@ app.post('/api/customers/save', (req: Request, res: Response) => {
 
 // Expenses
 app.get('/api/expenses', (req: Request, res: Response) => {
-  res.json({ success: true, expenses: loadStoredExpenses() });
+  const meta = loadSystemMeta();
+  const catalogWipeTs = Number(meta.lastCatalogWipeTimestamp || meta.lastWipeTimestamp || 0);
+  const raw = loadStoredExpenses();
+  const expenses = catalogWipeTs > 0
+    ? raw.filter((e: any) => (e.timestamp ? new Date(e.timestamp).getTime() : 0) > catalogWipeTs)
+    : raw;
+  res.json({ success: true, expenses });
 });
 
 app.post('/api/expenses/save', (req: Request, res: Response) => {
@@ -1279,7 +1303,13 @@ app.post('/api/expenses/save', (req: Request, res: Response) => {
 
 // Credit Transactions
 app.get('/api/credit-txs', (req: Request, res: Response) => {
-  res.json({ success: true, creditTxs: loadStoredCreditTxs() });
+  const meta = loadSystemMeta();
+  const catalogWipeTs = Number(meta.lastCatalogWipeTimestamp || meta.lastWipeTimestamp || 0);
+  const raw = loadStoredCreditTxs();
+  const creditTxs = catalogWipeTs > 0
+    ? raw.filter((t: any) => (t.timestamp ? new Date(t.timestamp).getTime() : 0) > catalogWipeTs)
+    : raw;
+  res.json({ success: true, creditTxs });
 });
 
 app.post('/api/credit-txs/save', (req: Request, res: Response) => {
