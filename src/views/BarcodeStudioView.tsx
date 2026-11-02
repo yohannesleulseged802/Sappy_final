@@ -46,7 +46,7 @@ export const BarcodeStudioView: React.FC<BarcodeStudioViewProps> = ({
 }) => {
   // Label Sheet Settings
   const [labelTemplate, setLabelTemplate] = useState<
-    'a4_30up' | 'a4_24up' | 'thermal_50x30' | 'thermal_40x25' | 'thermal_60x40'
+    'a4_40up' | 'a4_30up' | 'a4_24up' | 'thermal_50x30' | 'thermal_40x25' | 'thermal_60x40'
   >('a4_30up');
   const [showStoreName, setShowStoreName] = useState(true);
   const [showPrice, setShowPrice] = useState(true);
@@ -547,6 +547,7 @@ export const BarcodeStudioView: React.FC<BarcodeStudioViewProps> = ({
               onChange={(e) => setLabelTemplate(e.target.value as any)}
               className="w-full bg-[#f5f1e8] dark:bg-[#25201b] border border-stone-200 dark:border-stone-700 rounded-xl p-2.5 text-xs font-semibold text-stone-900 dark:text-stone-100"
             >
+              <option value="a4_40up">A4 Sheet — 40 Labels (4 x 10, 48.5mm x 25.4mm)</option>
               <option value="a4_30up">A4 Sheet — 30 Labels (3 x 10, 70mm x 29.7mm)</option>
               <option value="a4_24up">A4 Sheet — 24 Labels (3 x 8, 70mm x 37mm)</option>
               <option value="thermal_50x30">Thermal Roll — 50mm x 30mm (Single Column)</option>
@@ -882,7 +883,9 @@ export const BarcodeStudioView: React.FC<BarcodeStudioViewProps> = ({
             {/* Grid Layout depending on sheet type */}
             <div
               className={`grid gap-2 ${
-                labelTemplate === 'a4_30up'
+                labelTemplate === 'a4_40up'
+                  ? 'grid-cols-4'
+                  : labelTemplate === 'a4_30up'
                   ? 'grid-cols-3'
                   : labelTemplate === 'a4_24up'
                   ? 'grid-cols-3'

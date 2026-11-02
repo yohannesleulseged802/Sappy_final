@@ -161,7 +161,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               title="Auto-sync active: Synchronizing all store data across devices"
             >
               <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-600 dark:text-emerald-400" />
-              <span className="text-[11px] font-bold">↻ AUTO-SYNCING (10s)</span>
+              <span className="text-[11px] font-bold">↻ AUTO-SYNCING ({settings.autoSyncIntervalSeconds || 60}s)</span>
             </button>
           ) : !isOnline ? (
             <div
@@ -175,13 +175,13 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               onClick={triggerSync}
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition cursor-pointer"
-              title={`Auto-syncing every 10 seconds. Last synced: ${secondsAgo === 0 ? 'just now' : `${secondsAgo}s ago`}. Click to force immediate sync.`}
+              title={`Auto-syncing every ${settings.autoSyncIntervalSeconds || 60} seconds. Last synced: ${secondsAgo === 0 ? 'just now' : `${secondsAgo}s ago`}. Click to force immediate sync.`}
             >
               <span className="relative flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
               </span>
-              <span className="font-extrabold tracking-wide">AUTO-SYNC (10s)</span>
+              <span className="font-extrabold tracking-wide">AUTO-SYNC ({settings.autoSyncIntervalSeconds || 60}s)</span>
               <span className="text-[10px] font-mono opacity-80 hidden lg:inline">
                 {secondsAgo <= 2 ? '• JUST NOW' : `• ${secondsAgo}s AGO`}
               </span>

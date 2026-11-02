@@ -6,7 +6,7 @@ import * as XLSX from 'xlsx';
 import {Sale, Product, StoreSettings, Customer, Shift, LabelItem, CodeType} from '../types';
 
 export interface BarcodePDFOptions {
-  template?: 'a4_30up' | 'a4_24up' | 'thermal_50x30' | 'thermal_40x25' | 'thermal_60x40';
+  template?: 'a4_40up' | 'a4_30up' | 'a4_24up' | 'thermal_50x30' | 'thermal_40x25' | 'thermal_60x40';
   showStoreName?: boolean;
   showPrice?: boolean;
   showSku?: boolean;
@@ -782,6 +782,46 @@ export class ExportService {
     return this.generateA4InvoicePDF(sale, settings);
   }
 
+  /**
+   * Generates a PDF directly from an HTML element (e.g. InvoiceTemplate DOM node)
+   * or falls back seamlessly to the vector A4 generator.
+   */
+  static async generatePDFFromElement(
+    element: HTMLElement,
+    filename: string = 'Invoice.pdf',
+    options?: { format?: 'a4' | 'letter'; sale?: Sale; settings?: StoreSettings }
+  ): Promise<void> {
+    if (options?.sale && options?.settings) {
+      await this.generateA4InvoicePDF(options.sale, options.settings, { format: options.format });
+      return;
+    }
+
+    const isLetter = options?.format === 'letter';
+    const doc = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: isLetter ? 'letter' : 'a4',
+    });
+
+    try {
+      await doc.html(element, {
+        callback: (pdf) => {
+          pdf.save(filename);
+        },
+        x: 0,
+        y: 0,
+        width: isLetter ? 215.9 : 210,
+        windowWidth: 794,
+        autoPaging: 'text',
+      });
+    } catch (err) {
+      console.warn('Direct HTML to jsPDF notice, falling back to vector generator:', err);
+      if (options?.sale && options?.settings) {
+        await this.generateA4InvoicePDF(options.sale, options.settings, { format: options.format });
+      }
+    }
+  }
+
   // --- Generate Shift Summary Report PDF ---
   static generateShiftReportPDF(shift: Shift, settings: StoreSettings) {
     const doc = new jsPDF();
@@ -1025,23 +1065,45 @@ export class ExportService {
       return;
     }
 
-    // A4 Sheet Layout (a4_30up or a4_24up)
+    // A4 Sheet Layout (a4_40up, a4_30up, or a4_24up)
     const doc = new jsPDF({
       orientation: 'portrait',
       unit: 'mm',
       format: 'a4',
     });
 
-    const is30Up = template === 'a4_30up';
-    const cols = 3;
-    const rows = is30Up ? 10 : 8;
+    let cols = 3;
+    let rows = 10;
+    let labelWidth = 63.5;
+    let labelHeight = 27.5;
+    let gapX = 2.5;
+    let gapY = 0.8;
+
+    if (template === 'a4_40up') {
+      cols = 4;
+      rows = 10;
+      labelWidth = 48.5;
+      labelHeight = 25.4;
+      gapX = 1.0;
+      gapY = 0.5;
+    } else if (template === 'a4_24up') {
+      cols = 3;
+      rows = 8;
+      labelWidth = 64;
+      labelHeight = 33.5;
+      gapX = 2.5;
+      gapY = 0.8;
+    } else {
+      // Default to a4_30up (3x10)
+      cols = 3;
+      rows = 10;
+      labelWidth = 63.5;
+      labelHeight = 27.5;
+      gapX = 2.5;
+      gapY = 0.8;
+    }
+
     const perPage = cols * rows;
-
-    const labelWidth = is30Up ? 63.5 : 64;
-    const labelHeight = is30Up ? 27.5 : 33.5;
-    const gapX = 2.5;
-    const gapY = 0.8;
-
     const marginX = (210 - (cols * labelWidth + (cols - 1) * gapX)) / 2;
     const marginY = (297 - (rows * labelHeight + (rows - 1) * gapY)) / 2;
 

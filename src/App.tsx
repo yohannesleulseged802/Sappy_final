@@ -237,8 +237,9 @@ export default function App() {
       setSettings(updatedSettings);
     });
 
-    // 8. Auto-Sync Engine: triggers full two-way synchronization every 10 seconds
-    const unsubscribeAutoSync = storage.startAutoSync(10, () => {
+    // 8. Auto-Sync Engine: triggers full two-way synchronization every 60 seconds (or custom user setting)
+    const syncInterval = settings.autoSyncIntervalSeconds || 60;
+    const unsubscribeAutoSync = storage.startAutoSync(syncInterval, () => {
       if (!isMounted) return;
       refreshAllData();
     });
@@ -300,7 +301,7 @@ export default function App() {
       window.removeEventListener('sappy-cross-device-wipe', handleCrossDeviceWipe);
       window.removeEventListener('focus', handleFocus);
     };
-  }, [isOnline, refreshAllData]);
+  }, [isOnline, refreshAllData, settings.autoSyncIntervalSeconds]);
 
   // Cashier Switch via PIN Modal
   const handleCashierAuthenticated = (staff: Staff) => {

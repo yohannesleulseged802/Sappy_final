@@ -22,6 +22,7 @@ import {
   Cloud,
   Activity,
   Wifi,
+  Clock,
 } from 'lucide-react';
 import {StoreSettings, Staff} from '../types';
 import {storage, AutoSyncState} from '../services/storage';
@@ -64,13 +65,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     settings.lowStockDefaultThreshold ?? 5
   );
   const [barcodePrefix, setBarcodePrefix] = useState(settings.barcodePrefix || 'SAP');
+  const [autoSyncIntervalSeconds, setAutoSyncIntervalSeconds] = useState<number>(
+    settings.autoSyncIntervalSeconds || 60
+  );
+  const [customCadenceInput, setCustomCadenceInput] = useState<string>('');
 
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [resetProfileOnWipe, setResetProfileOnWipe] = useState(false);
   const [showResetModal, setShowResetModal] = useState(false);
 
-  // 10-Second Auto-Sync Engine State
+  // Auto-Sync Engine State (60s Default & Adjustable)
   const [autoSyncState, setAutoSyncState] = useState<AutoSyncState>(() => storage.getAutoSyncState());
   const [isManualSyncing, setIsManualSyncing] = useState(false);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
@@ -142,6 +147,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setReceiptFooterMessage(settings.receiptFooterMessage || '');
     setLowStockDefaultThreshold(settings.lowStockDefaultThreshold ?? 5);
     setBarcodePrefix(settings.barcodePrefix || 'SAP');
+    setAutoSyncIntervalSeconds(settings.autoSyncIntervalSeconds || 60);
   }, [settings]);
 
   const handleSaveSettings = async (e?: React.FormEvent) => {
@@ -165,6 +171,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       receiptFooterMessage: receiptFooterMessage.trim(),
       lowStockDefaultThreshold,
       barcodePrefix: barcodePrefix.trim() || 'SAP',
+      autoSyncIntervalSeconds,
     };
 
     storage.saveSettings(updated);
@@ -264,6 +271,29 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     } finally {
       setIsManualSyncing(false);
     }
+  };
+
+  const handleUpdateAutoSyncCadence = async (newSeconds: number) => {
+    const valid = Math.max(5, Math.min(3600, Math.round(newSeconds)));
+    setAutoSyncIntervalSeconds(valid);
+    storage.setAutoSyncInterval(valid);
+    const updated: StoreSettings = {
+      ...settings,
+      autoSyncIntervalSeconds: valid,
+    };
+    try {
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated),
+      });
+    } catch {}
+    sound.playScanSuccess();
+    setSyncFeedback(
+      `Auto-sync cadence updated to every ${valid >= 60 && valid % 60 === 0 ? `${valid / 60} minute(s)` : `${valid} seconds`}!`
+    );
+    setTimeout(() => setSyncFeedback(null), 4000);
+    onRefreshData();
   };
 
   return (
@@ -601,7 +631,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
       </form>
 
-      {/* Continuous 10-Second Auto-Sync Engine Card */}
+      {/* Continuous Auto-Sync Engine Card (Adjustable Cadence) */}
       <div className="p-5 bg-white dark:bg-[#1c1815] border border-emerald-200 dark:border-emerald-900/60 rounded-2xl shadow-xs space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-start gap-3">
@@ -611,15 +641,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="font-extrabold text-sm text-stone-900 dark:text-stone-100">
-                  Continuous 10-Second Auto-Sync Engine
+                  Continuous Auto-Sync Engine
                 </h3>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-extrabold border border-emerald-300 dark:border-emerald-800 flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                  ACTIVE (EVERY 10 SECONDS)
+                  ACTIVE (EVERY {autoSyncIntervalSeconds} SECONDS)
                 </span>
               </div>
               <p className="text-xs text-stone-500 dark:text-stone-400 mt-0.5">
-                Automatically synchronizes products, sales orders, customer accounts, expenses, and staff credentials with Cloud Firestore &amp; backend server every 10 seconds.
+                Automatically synchronizes products, sales orders, customer accounts, expenses, and staff credentials with Cloud Firestore &amp; backend server every {autoSyncIntervalSeconds} seconds.
               </p>
             </div>
           </div>
@@ -631,7 +661,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-xs disabled:opacity-60 shrink-0"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isManualSyncing || autoSyncState.status === 'syncing' ? 'animate-spin' : ''}`} />
-            <span>{isManualSyncing || autoSyncState.status === 'syncing' ? 'Syncing Now...' : 'Sync Now (Force 10s Cycle)'}</span>
+            <span>{isManualSyncing || autoSyncState.status === 'syncing' ? 'Syncing Now...' : 'Sync Now (Force Cycle)'}</span>
           </button>
         </div>
 
@@ -639,7 +669,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
           <div className="p-3 rounded-xl bg-stone-50 dark:bg-stone-900/60 border border-stone-200 dark:border-stone-800">
             <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">Auto-Sync Cadence</span>
-            <div className="text-xs font-black text-emerald-700 dark:text-emerald-400 mt-0.5">Every 10 Seconds</div>
+            <div className="text-xs font-black text-emerald-700 dark:text-emerald-400 mt-0.5 flex items-center gap-1">
+              <Clock className="w-3.5 h-3.5" />
+              <span>Every {autoSyncIntervalSeconds}s</span>
+            </div>
           </div>
           <div className="p-3 rounded-xl bg-stone-50 dark:bg-stone-900/60 border border-stone-200 dark:border-stone-800">
             <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">Last Synced</span>
@@ -665,6 +698,80 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">Offline Queue</span>
             <div className="text-xs font-bold text-stone-800 dark:text-stone-200 mt-0.5">
               {autoSyncState.pendingQueueCount} pending
+            </div>
+          </div>
+        </div>
+
+        {/* Adjustable Cadence Control Panel */}
+        <div className="p-3.5 bg-stone-50 dark:bg-stone-900/80 border border-stone-200 dark:border-stone-800 rounded-xl space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <span className="text-xs font-bold text-stone-900 dark:text-stone-100 flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-emerald-600" />
+                Adjust Auto-Sync Cadence
+              </span>
+              <p className="text-[11px] text-stone-500 dark:text-stone-400">
+                Choose how often the system synchronizes local data with Firestore and the server.
+              </p>
+            </div>
+            {syncFeedback && (
+              <div className="text-xs font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/80 px-2.5 py-1 rounded-lg border border-emerald-300 dark:border-emerald-800 animate-fadeIn">
+                {syncFeedback}
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {[
+              { label: '15s (Ultra-Fast)', value: 15 },
+              { label: '30s (Fast)', value: 30 },
+              { label: '60s (Default)', value: 60 },
+              { label: '120s (2 min)', value: 120 },
+              { label: '300s (5 min)', value: 300 },
+            ].map((preset) => {
+              const isSelected = autoSyncIntervalSeconds === preset.value;
+              return (
+                <button
+                  key={preset.value}
+                  type="button"
+                  onClick={() => handleUpdateAutoSyncCadence(preset.value)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                    isSelected
+                      ? 'bg-emerald-700 text-white shadow-xs ring-2 ring-emerald-500/40'
+                      : 'bg-white dark:bg-stone-800 text-stone-700 dark:text-stone-300 border border-stone-200 dark:border-stone-700 hover:border-emerald-400 dark:hover:border-emerald-600'
+                  }`}
+                >
+                  {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                  <span>{preset.label}</span>
+                </button>
+              );
+            })}
+
+            {/* Custom Interval Input */}
+            <div className="flex items-center gap-1.5 ml-auto">
+              <input
+                type="number"
+                min="5"
+                max="3600"
+                placeholder="Custom (sec)"
+                value={customCadenceInput}
+                onChange={(e) => setCustomCadenceInput(e.target.value)}
+                className="w-24 px-2.5 py-1.5 bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-lg text-xs text-stone-900 dark:text-stone-100 placeholder-stone-400 focus:outline-hidden focus:border-emerald-500"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  const val = parseInt(customCadenceInput, 10);
+                  if (!isNaN(val) && val >= 5) {
+                    handleUpdateAutoSyncCadence(val);
+                    setCustomCadenceInput('');
+                  }
+                }}
+                disabled={!customCadenceInput || parseInt(customCadenceInput, 10) < 5}
+                className="px-2.5 py-1.5 bg-stone-200 dark:bg-stone-700 hover:bg-emerald-600 hover:text-white disabled:opacity-40 text-stone-800 dark:text-stone-200 rounded-lg text-xs font-bold transition cursor-pointer"
+              >
+                Set
+              </button>
             </div>
           </div>
         </div>

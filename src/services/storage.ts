@@ -68,6 +68,7 @@ const DEFAULT_SETTINGS: StoreSettings = {
   lowStockDefaultThreshold: 5,
   barcodePrefix: 'SAP',
   themeMode: 'light',
+  autoSyncIntervalSeconds: 60,
 };
 
 // Note: Requirement #1 - All demo/hardcoded default staff accounts removed.
@@ -248,8 +249,19 @@ class StorageService {
 
   saveSettings(settings: StoreSettings) {
     if (!this.isBrowser()) return;
+    const oldSettings = this.getSettings();
     localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
     this.addAuditLog('UPDATED_STORE_SETTINGS', 'SETTINGS', `Store settings and tax preferences updated.`);
+    if (
+      settings.autoSyncIntervalSeconds &&
+      settings.autoSyncIntervalSeconds !== oldSettings.autoSyncIntervalSeconds
+    ) {
+      this.currentAutoSyncState.intervalSeconds = settings.autoSyncIntervalSeconds;
+      this.notifyAutoSyncListeners();
+      if (this.currentAutoSyncState.isActive) {
+        this.startAutoSync(settings.autoSyncIntervalSeconds);
+      }
+    }
     this.pushSettingsToFirestore(settings).catch(() => {});
     try {
       fetch('/api/settings', {
@@ -3101,13 +3113,13 @@ class StorageService {
     return processedCount;
   }
 
-  // --- Auto-Sync Engine (10-Second Cadence) ---
+  // --- Auto-Sync Engine (60-Second Adjustable Cadence) ---
   private autoSyncTimer: any = null;
   private isSyncInProgress: boolean = false;
   private autoSyncListeners: Set<(state: AutoSyncState) => void> = new Set();
   private currentAutoSyncState: AutoSyncState = {
     isActive: true,
-    intervalSeconds: 10,
+    intervalSeconds: 60,
     lastSyncedAt: null,
     status: 'idle',
     pendingQueueCount: 0,
@@ -3193,7 +3205,7 @@ class StorageService {
 
       this.currentAutoSyncState = {
         isActive: true,
-        intervalSeconds: 10,
+        intervalSeconds: this.getAutoSyncInterval(),
         lastSyncedAt: nowIso,
         status: 'synced',
         pendingQueueCount: this.getSyncQueue().length,
@@ -3233,14 +3245,33 @@ class StorageService {
     return this.getAutoSyncState();
   }
 
-  startAutoSync(intervalSeconds: number = 10, onSync?: (state: AutoSyncState) => void): () => void {
+  getAutoSyncInterval(): number {
+    const settings = this.getSettings();
+    return settings.autoSyncIntervalSeconds && settings.autoSyncIntervalSeconds >= 5
+      ? settings.autoSyncIntervalSeconds
+      : 60;
+  }
+
+  setAutoSyncInterval(seconds: number): void {
+    const valid = Math.max(5, Math.min(3600, Math.round(seconds)));
+    const settings = this.getSettings();
+    settings.autoSyncIntervalSeconds = valid;
+    this.saveSettings(settings);
+  }
+
+  startAutoSync(intervalSeconds?: number, onSync?: (state: AutoSyncState) => void): () => void {
+    const effectiveInterval =
+      typeof intervalSeconds === 'number' && intervalSeconds >= 5
+        ? intervalSeconds
+        : this.getAutoSyncInterval();
+
     if (this.autoSyncTimer) {
       clearInterval(this.autoSyncTimer);
       this.autoSyncTimer = null;
     }
 
     this.currentAutoSyncState.isActive = true;
-    this.currentAutoSyncState.intervalSeconds = intervalSeconds;
+    this.currentAutoSyncState.intervalSeconds = effectiveInterval;
     this.notifyAutoSyncListeners();
 
     // Trigger an initial sync cycle immediately
@@ -3248,7 +3279,7 @@ class StorageService {
       if (onSync) onSync(state);
     });
 
-    const intervalMs = Math.max(3000, intervalSeconds * 1000); // 10s default
+    const intervalMs = Math.max(3000, effectiveInterval * 1000);
     this.autoSyncTimer = setInterval(() => {
       this.performAutoSync().then((state) => {
         if (onSync) onSync(state);

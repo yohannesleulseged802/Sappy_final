@@ -272,6 +272,7 @@ export interface StoreSettings {
   barcodePrefix: string; // e.g. "SAP"
   themeMode: 'light' | 'dark';
   inactivityLockMinutes?: number; // e.g. 15 (0 for disabled)
+  autoSyncIntervalSeconds?: number; // e.g. 60 (default 60s, adjustable cadence)
 }
 
 export interface SyncQueueItem {
