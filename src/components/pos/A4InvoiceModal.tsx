@@ -1,12 +1,13 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   X,
   Printer,
-  Download,
+  FileDown,
   FileText,
 } from 'lucide-react';
 import { Sale, StoreSettings } from '../../types';
 import { ExportService } from '../../services/export';
+import { sound } from '../../services/sound';
 import { InvoiceTemplate } from './InvoiceTemplate';
 
 interface A4InvoiceModalProps {
@@ -14,6 +15,7 @@ interface A4InvoiceModalProps {
   settings: StoreSettings;
   isOpen: boolean;
   onClose: () => void;
+  defaultFormat?: 'a4' | 'letter';
 }
 
 export const A4InvoiceModal: React.FC<A4InvoiceModalProps> = ({
@@ -21,8 +23,11 @@ export const A4InvoiceModal: React.FC<A4InvoiceModalProps> = ({
   settings,
   isOpen,
   onClose,
+  defaultFormat = 'a4',
 }) => {
   const printContainerRef = useRef<HTMLDivElement>(null);
+  const [docFormat, setDocFormat] = useState<'a4' | 'letter'>(defaultFormat);
+  const [isExporting, setIsExporting] = useState(false);
 
   if (!isOpen || !sale) return null;
 
@@ -31,7 +36,16 @@ export const A4InvoiceModal: React.FC<A4InvoiceModalProps> = ({
   };
 
   const handleDownloadPDF = async () => {
-    await ExportService.generateA4InvoicePDF(sale, settings);
+    try {
+      setIsExporting(true);
+      await ExportService.generateA4InvoicePDF(sale, settings, { format: docFormat });
+      sound.playCheckoutSuccess();
+    } catch (err) {
+      console.error('Failed to export PDF:', err);
+      alert('Failed to generate PDF. Please try again.');
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const formattedDate = new Date(sale.date).toLocaleString([], {
@@ -47,16 +61,16 @@ export const A4InvoiceModal: React.FC<A4InvoiceModalProps> = ({
       {/* Container Card */}
       <div className="relative w-full max-w-4xl bg-stone-900 border border-stone-800 rounded-3xl shadow-2xl flex flex-col my-auto max-h-[94vh]">
         {/* Top Control Bar (Hidden when printing) */}
-        <div className="print:hidden p-4 sm:px-6 bg-stone-950/80 border-b border-stone-800 rounded-t-3xl flex items-center justify-between gap-4">
+        <div className="print:hidden p-4 sm:px-6 bg-stone-950/80 border-b border-stone-800 rounded-t-3xl flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-[#064e3b] text-[#6ee7b7] flex items-center justify-center">
+            <div className="w-9 h-9 rounded-xl bg-[#064e3b] text-[#6ee7b7] flex items-center justify-center shrink-0">
               <FileText className="w-5 h-5" />
             </div>
             <div>
               <h2 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
                 <span>Tax Invoice / Receipt #{sale.receiptNumber}</span>
                 <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800">
-                  Full A4 Document
+                  {docFormat.toUpperCase()} Format
                 </span>
               </h2>
               <p className="text-xs text-stone-400">
@@ -65,7 +79,33 @@ export const A4InvoiceModal: React.FC<A4InvoiceModalProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Format Switcher */}
+            <div className="flex items-center p-0.5 bg-stone-800 rounded-lg text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => setDocFormat('a4')}
+                className={`px-2.5 py-1 rounded-md transition ${
+                  docFormat === 'a4'
+                    ? 'bg-[#064e3b] text-white shadow-xs'
+                    : 'text-stone-400 hover:text-white'
+                }`}
+              >
+                A4
+              </button>
+              <button
+                type="button"
+                onClick={() => setDocFormat('letter')}
+                className={`px-2.5 py-1 rounded-md transition ${
+                  docFormat === 'letter'
+                    ? 'bg-[#064e3b] text-white shadow-xs'
+                    : 'text-stone-400 hover:text-white'
+                }`}
+              >
+                Letter
+              </button>
+            </div>
+
             <button
               type="button"
               onClick={handlePrint}
@@ -73,17 +113,27 @@ export const A4InvoiceModal: React.FC<A4InvoiceModalProps> = ({
               title="Print document"
             >
               <Printer className="w-4 h-4 text-[#6ee7b7]" />
-              <span className="hidden sm:inline">Print Document</span>
+              <span className="hidden sm:inline">Print</span>
             </button>
 
             <button
               type="button"
+              disabled={isExporting}
               onClick={handleDownloadPDF}
-              className="px-4 py-2 bg-[#064e3b] hover:bg-[#053e2f] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md transition cursor-pointer"
-              title="Download official PDF"
+              className="px-4 py-2 bg-[#064e3b] hover:bg-[#053e2f] disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md transition cursor-pointer"
+              title={`Export official ${docFormat.toUpperCase()} PDF`}
             >
-              <Download className="w-4 h-4" />
-              <span>Download PDF</span>
+              {isExporting ? (
+                <>
+                  <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  <span>Generating...</span>
+                </>
+              ) : (
+                <>
+                  <FileDown className="w-4 h-4 text-[#6ee7b7]" />
+                  <span>Export to PDF ({docFormat.toUpperCase()})</span>
+                </>
+              )}
             </button>
 
             <button
@@ -103,6 +153,7 @@ export const A4InvoiceModal: React.FC<A4InvoiceModalProps> = ({
             ref={printContainerRef}
             sale={sale}
             settings={settings}
+            format={docFormat}
             onPrint={handlePrint}
             onDownloadPDF={handleDownloadPDF}
           />

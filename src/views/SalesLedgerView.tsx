@@ -15,6 +15,7 @@ import {
 import {Sale, StoreSettings, Staff} from '../types';
 import {storage} from '../services/storage';
 import {ExportService} from '../services/export';
+import {sound} from '../services/sound';
 import {BarcodeRenderer} from '../components/common/BarcodeRenderer';
 import {PinModal} from '../components/common/PinModal';
 import {A4InvoiceModal} from '../components/pos/A4InvoiceModal';
@@ -41,6 +42,23 @@ export const SalesLedgerView: React.FC<SalesLedgerViewProps> = ({
 
   // Selected Sale for Full A4 Invoice & Receipt Generation
   const [invoiceSale, setInvoiceSale] = useState<Sale | null>(null);
+
+  // PDF Export Format State (A4 vs Letter)
+  const [detailPdfFormat, setDetailPdfFormat] = useState<'a4' | 'letter'>('a4');
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+
+  const handleExportPdf = async (sale: Sale, format: 'a4' | 'letter' = detailPdfFormat) => {
+    try {
+      setIsExportingPdf(true);
+      await ExportService.generateA4InvoicePDF(sale, settings, { format });
+      sound.playCheckoutSuccess();
+    } catch (err) {
+      console.error('Failed to export PDF:', err);
+      alert('Failed to generate invoice PDF. Please try again.');
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
 
   // Refund Modal State
   const [isRefundModalOpen, setIsRefundModalOpen] = useState(false);
@@ -239,12 +257,12 @@ export const SalesLedgerView: React.FC<SalesLedgerViewProps> = ({
                   </button>
 
                   <button
-                    onClick={() => ExportService.generateA4InvoicePDF(s, settings)}
+                    onClick={() => handleExportPdf(s, detailPdfFormat)}
                     className="p-2 min-h-[44px] min-w-[44px] hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-600 dark:text-stone-300 rounded-xl transition flex items-center justify-center touch-manipulation cursor-pointer border border-stone-200 dark:border-stone-700"
-                    title="Download A4 Invoice PDF"
-                    aria-label="Download A4 invoice PDF"
+                    title={`Export ${detailPdfFormat.toUpperCase()} Invoice PDF`}
+                    aria-label={`Export ${detailPdfFormat.toUpperCase()} invoice PDF`}
                   >
-                    <Download className="w-4 h-4" />
+                    <FileDown className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                   </button>
 
                   {s.status === 'COMPLETED' && (
@@ -351,11 +369,11 @@ export const SalesLedgerView: React.FC<SalesLedgerViewProps> = ({
                         </button>
 
                         <button
-                          onClick={() => ExportService.generateA4InvoicePDF(s, settings)}
+                          onClick={() => handleExportPdf(s, detailPdfFormat)}
                           className="p-1 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-600 dark:text-stone-300 rounded-lg transition cursor-pointer"
-                          title="Download A4 Invoice PDF"
+                          title={`Export ${detailPdfFormat.toUpperCase()} Invoice PDF`}
                         >
-                          <Download className="w-3.5 h-3.5" />
+                          <FileDown className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                         </button>
 
                         {s.status === 'COMPLETED' && (
@@ -463,27 +481,111 @@ export const SalesLedgerView: React.FC<SalesLedgerViewProps> = ({
               </div>
             </div>
 
-            {/* Action Buttons */}
-            <div className="flex flex-wrap justify-end gap-2">
+            {/* Customer & Payment Tender Info */}
+            <div className="grid grid-cols-2 gap-2.5 p-3 bg-stone-50 dark:bg-stone-800/40 rounded-xl text-xs mb-3 border border-stone-200/60 dark:border-stone-800">
+              <div>
+                <span className="text-[10px] text-stone-400 font-bold uppercase tracking-wider block">Customer</span>
+                <span className="font-semibold text-stone-800 dark:text-stone-200 block truncate">
+                  {selectedSale.customerName || 'Walk-in Retail Customer'}
+                </span>
+                {selectedSale.customerPhone && (
+                  <span className="text-[10px] text-stone-500 block">{selectedSale.customerPhone}</span>
+                )}
+              </div>
+              <div>
+                <span className="text-[10px] text-stone-400 font-bold uppercase tracking-wider block">Payment Tender</span>
+                <div className="flex flex-wrap gap-1 mt-0.5">
+                  {selectedSale.payments.map((p, i) => (
+                    <span
+                      key={i}
+                      className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-stone-200/80 dark:bg-stone-700 text-stone-800 dark:text-stone-200"
+                    >
+                      {p.method.replace('_', ' ').toUpperCase()}: {p.amount.toFixed(2)} {settings.currency}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Invoice Export Format Selector Banner */}
+            <div className="p-3 bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/60 dark:border-emerald-800/40 rounded-xl mb-4 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-950 dark:text-emerald-300">
+                  <FileText className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <span>Invoice Export Options</span>
+                </div>
+                {/* Format Toggle Pill */}
+                <div className="flex items-center p-0.5 bg-stone-200 dark:bg-stone-800 rounded-lg text-xs font-semibold">
+                  <button
+                    type="button"
+                    onClick={() => setDetailPdfFormat('a4')}
+                    className={`px-2.5 py-1 rounded-md transition ${
+                      detailPdfFormat === 'a4'
+                        ? 'bg-[#064e3b] text-white shadow-xs'
+                        : 'text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100'
+                    }`}
+                  >
+                    A4 (210×297mm)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDetailPdfFormat('letter')}
+                    className={`px-2.5 py-1 rounded-md transition ${
+                      detailPdfFormat === 'letter'
+                        ? 'bg-[#064e3b] text-white shadow-xs'
+                        : 'text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100'
+                    }`}
+                  >
+                    Letter (8.5×11")
+                  </button>
+                </div>
+              </div>
+              <p className="text-[11px] text-stone-600 dark:text-stone-400 leading-tight">
+                Generates a clean vector PDF tax invoice complete with corporate store branding, itemized table, VAT details, and verification barcode.
+              </p>
+            </div>
+
+            {/* Action Buttons: Export to PDF, Preview, and Close */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-stone-100 dark:border-stone-800">
               <button
                 type="button"
-                onClick={() => {
-                  setInvoiceSale(selectedSale);
-                }}
-                className="px-4 py-2 bg-[#064e3b] hover:bg-[#043b2c] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md transition cursor-pointer"
+                onClick={() => setInvoiceSale(selectedSale)}
+                className="px-3.5 py-2 bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 text-stone-800 dark:text-stone-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer border border-stone-200 dark:border-stone-700"
+                title="Preview full invoice document and print"
               >
-                <FileText className="w-3.5 h-3.5 text-[#6ee7b7]" />
-                <span>Generate Official A4 Invoice</span>
+                <Printer className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                <span>Preview / Print</span>
               </button>
 
-              <button
-                type="button"
-                onClick={() => ExportService.generateA4InvoicePDF(selectedSale, settings)}
-                className="px-4 py-2 bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 text-stone-900 dark:text-stone-100 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer border border-stone-200 dark:border-stone-700"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Download PDF</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedSale(null)}
+                  className="px-3 py-2 text-xs font-semibold text-stone-500 hover:text-stone-800 dark:hover:text-stone-200 transition cursor-pointer"
+                >
+                  Close
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isExportingPdf}
+                  onClick={() => handleExportPdf(selectedSale, detailPdfFormat)}
+                  className="px-4 py-2.5 bg-[#064e3b] hover:bg-[#043b2c] disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-md hover:shadow-lg transition cursor-pointer"
+                  title={`Export ${detailPdfFormat.toUpperCase()} invoice as PDF`}
+                >
+                  {isExportingPdf ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      <span>Generating PDF...</span>
+                    </>
+                  ) : (
+                    <>
+                      <FileDown className="w-4 h-4 text-[#6ee7b7]" />
+                      <span>Export to PDF ({detailPdfFormat.toUpperCase()})</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -543,6 +645,7 @@ export const SalesLedgerView: React.FC<SalesLedgerViewProps> = ({
         settings={settings}
         isOpen={!!invoiceSale}
         onClose={() => setInvoiceSale(null)}
+        defaultFormat={detailPdfFormat}
       />
     </div>
   );
