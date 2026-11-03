@@ -296,15 +296,21 @@ class AuthService {
       return { success: false, error: 'Job title is required.' };
     }
 
-    // 3. Server Registration (Always register on server — both Master Passcode & Pending accounts)
-    const generatedUid = `staff-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    // 3. Check if user already exists locally to reuse UID and prevent ghost duplicate accounts
+    const existingStaff = storage.getStaffList();
+    const existingAccount = existingStaff.find(
+      (s) =>
+        (s.email && s.email.trim().toLowerCase() === cleanEmail) ||
+        (s.username && s.username.trim().toLowerCase() === cleanUsername)
+    );
+    const candidateUid = existingAccount?.id || `staff-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
     let serverResult: any = null;
     try {
       const resp = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          uid: generatedUid,
+          uid: candidateUid,
           signupToken: token || undefined,
           masterPasscode: payload.masterPasscode?.trim() || undefined,
           ...payload,
@@ -325,7 +331,7 @@ class AuthService {
     }
 
     // 4. Optional Firebase Authentication Integration (bounded timeout, non-blocking)
-    const finalUid = serverResult?.user?.uid || generatedUid;
+    const finalUid = serverResult?.user?.uid || existingAccount?.id || candidateUid;
     const fullName = `${payload.firstName.trim()} ${payload.lastName.trim()}`;
 
     try {
@@ -351,7 +357,6 @@ class AuthService {
     // 5. Role & Approval Assignment:
     // - Anyone who uses the Master Passcode is approved immediately!
     // - Anyone who does not know / enter the Master Passcode waits for administrator approval ('pending').
-    const existingStaff = storage.getStaffList();
     const isApprovedByPasscode =
       serverResult?.approvedByMasterPasscode ??
       serverResult?.isInitialAdmin ??
@@ -374,7 +379,9 @@ class AuthService {
 
     const cleanPin = (payload.pin || '1234').replace(/\D/g, '').slice(0, 4) || '1234';
     const employeeId =
-      serverResult?.user?.employeeId || `SAP-EMP-${1001 + existingStaff.length}`;
+      serverResult?.user?.employeeId ||
+      existingAccount?.employeeId ||
+      storage.generateNextEmployeeId(existingStaff);
 
     // 6. Build User Profile
     const newStaff: Staff = {

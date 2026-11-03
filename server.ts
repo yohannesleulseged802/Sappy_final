@@ -102,11 +102,95 @@ if (!fs.existsSync(SERVER_STORE_DIR)) {
   fs.mkdirSync(SERVER_STORE_DIR, { recursive: true });
 }
 
+function deduplicateStoredUsers(users: StoredUser[]): StoredUser[] {
+  if (!Array.isArray(users) || users.length <= 1) return users || [];
+
+  const deduplicated: StoredUser[] = [];
+
+  for (const u of users) {
+    if (!u) continue;
+    const emailKey = (u.email || '').trim().toLowerCase();
+    const usernameKey = (u.username || '').trim().toLowerCase();
+    const uidKey = (u.uid || '').trim();
+
+    // Check if duplicate of an already processed user
+    const existingIdx = deduplicated.findIndex((ex) => {
+      if (uidKey && ex.uid === uidKey) return true;
+      if (emailKey && (ex.email || '').trim().toLowerCase() === emailKey) return true;
+      if (usernameKey && (ex.username || '').trim().toLowerCase() === usernameKey) return true;
+      return false;
+    });
+
+    if (existingIdx >= 0) {
+      // Merge with existing record, keeping the highest role and active status
+      const existing = deduplicated[existingIdx];
+      const higherRole =
+        existing.role === 'admin' || u.role === 'admin'
+          ? 'admin'
+          : existing.role === 'manager' || u.role === 'manager'
+          ? 'manager'
+          : existing.role || u.role || 'cashier';
+
+      const isApproved =
+        existing.accountStatus === 'approved' ||
+        u.accountStatus === 'approved' ||
+        higherRole === 'admin';
+
+      deduplicated[existingIdx] = {
+        ...existing,
+        ...u,
+        uid: existing.uid || u.uid,
+        employeeId: existing.employeeId || u.employeeId,
+        role: higherRole,
+        accountStatus: isApproved ? 'approved' : existing.accountStatus || u.accountStatus,
+        active: existing.active || u.active,
+        profilePictureUrl: u.profilePictureUrl || existing.profilePictureUrl,
+        password: u.password || existing.password,
+        passwordHash: u.passwordHash || existing.passwordHash,
+        pin: u.pin && u.pin.length === 4 ? u.pin : existing.pin || '1234',
+        updatedAt: new Date().toISOString(),
+      };
+    } else {
+      deduplicated.push({ ...u });
+    }
+  }
+
+  // Ensure all employee IDs are unique and sequential (SAP-EMP-1001, 1002, ...)
+  const usedEmpIds = new Set<string>();
+  let nextSeq = 1001;
+
+  for (let i = 0; i < deduplicated.length; i++) {
+    const u = deduplicated[i];
+    let empId = u.employeeId;
+    if (!empId || usedEmpIds.has(empId.toUpperCase())) {
+      while (usedEmpIds.has(`SAP-EMP-${nextSeq}`)) {
+        nextSeq++;
+      }
+      empId = `SAP-EMP-${nextSeq}`;
+      nextSeq++;
+      deduplicated[i].employeeId = empId;
+    }
+    usedEmpIds.add(empId.toUpperCase());
+    const m = empId.match(/SAP-EMP-(\d+)/i);
+    if (m) {
+      const val = parseInt(m[1], 10);
+      if (!isNaN(val) && val >= nextSeq) nextSeq = val + 1;
+    }
+  }
+
+  return deduplicated;
+}
+
 function loadStoredUsers(): StoredUser[] {
   try {
     if (fs.existsSync(USERS_FILE)) {
       const data = fs.readFileSync(USERS_FILE, 'utf-8');
-      return JSON.parse(data);
+      const parsed: StoredUser[] = JSON.parse(data);
+      const deduplicated = deduplicateStoredUsers(parsed);
+      if (deduplicated.length !== parsed.length) {
+        fs.writeFileSync(USERS_FILE, JSON.stringify(deduplicated, null, 2), 'utf-8');
+      }
+      return deduplicated;
     }
   } catch (err) {
     console.error('Failed to read users file:', err);
@@ -116,7 +200,8 @@ function loadStoredUsers(): StoredUser[] {
 
 function saveStoredUsers(users: StoredUser[]) {
   try {
-    fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), 'utf-8');
+    const deduplicated = deduplicateStoredUsers(users);
+    fs.writeFileSync(USERS_FILE, JSON.stringify(deduplicated, null, 2), 'utf-8');
   } catch (err) {
     console.error('Failed to save users file:', err);
   }
@@ -227,7 +312,7 @@ app.post('/api/auth/reset-all-users', (req: Request, res: Response) => {
       ...currentUsers.map((u) => (u.email || '').toLowerCase()).filter(Boolean),
       ...currentUsers.map((u) => (u.username || '').toLowerCase()).filter(Boolean),
     ])
-  );
+  ).filter((id) => !/^sap-emp-\d+$/i.test(id));
 
   // Wipe all stored user accounts and security records (Requirement #1)
   saveStoredUsers([]);
@@ -552,8 +637,15 @@ app.post('/api/auth/register', (req: Request, res: Response) => {
 
   // 8. Generate Unique Employee ID (Requirement #4.C & #8)
   const existingRecord = existingMatchIndex >= 0 ? existingUsers[existingMatchIndex] : null;
-  const employeeSeq = 1001 + existingUsers.length;
-  const employeeId = existingRecord?.employeeId || `SAP-EMP-${employeeSeq}`;
+  let maxSeq = 1000;
+  for (const u of existingUsers) {
+    const m = (u.employeeId || '').match(/SAP-EMP-(\d+)/i);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (!isNaN(n) && n > maxSeq) maxSeq = n;
+    }
+  }
+  const employeeId = existingRecord?.employeeId || `SAP-EMP-${maxSeq + 1}`;
 
   const uid = existingRecord?.uid || ((requestedUid && typeof requestedUid === 'string' && requestedUid.trim())
     ? requestedUid.trim()
@@ -602,13 +694,14 @@ app.post('/api/auth/register', (req: Request, res: Response) => {
   saveStoredUsers(existingUsers);
 
   const currentDeleted = (meta.deletedUserIds || []).map((id) => id.toLowerCase());
-  const updatedDeleted = currentDeleted.filter(
-    (id) =>
-      id !== cleanEmail &&
-      id !== cleanUsername &&
-      id !== uid.toLowerCase() &&
-      id !== employeeId.toLowerCase()
-  );
+  const updatedDeleted = currentDeleted
+    .filter((id) => !/^sap-emp-\d+$/i.test(id))
+    .filter(
+      (id) =>
+        id !== cleanEmail &&
+        id !== cleanUsername &&
+        id !== uid.toLowerCase()
+    );
 
   saveSystemMeta({
     ...meta,
@@ -1057,9 +1150,21 @@ app.post('/api/pos/sync', (req: Request, res: Response) => {
         };
       } else {
         const fullName = inc.name || inc.fullName || `${inc.firstName || ''} ${inc.lastName || ''}`.trim() || 'Staff Member';
+        let maxSyncSeq = 1000;
+        for (const u of mergedUsers) {
+          const m = (u.employeeId || '').match(/SAP-EMP-(\d+)/i);
+          if (m) {
+            const val = parseInt(m[1], 10);
+            if (!isNaN(val) && val > maxSyncSeq) maxSyncSeq = val;
+          }
+        }
+        const assignedEmpId = inc.employeeId && !mergedUsers.some(u => u.employeeId?.toUpperCase() === inc.employeeId?.toUpperCase())
+          ? inc.employeeId
+          : `SAP-EMP-${maxSyncSeq + 1}`;
+
         mergedUsers.push({
           uid,
-          employeeId: inc.employeeId || `SAP-EMP-${1001 + mergedUsers.length}`,
+          employeeId: assignedEmpId,
           firstName: inc.firstName || fullName.split(' ')[0] || 'Staff',
           lastName: inc.lastName || fullName.split(' ').slice(1).join(' ') || '',
           fullName,
@@ -1454,7 +1559,7 @@ app.post('/api/system/wipe-everything', (req: Request, res: Response) => {
       ...currentUsers.map((u) => (u.email || '').toLowerCase()).filter(Boolean),
       ...currentUsers.map((u) => (u.username || '').toLowerCase()).filter(Boolean),
     ])
-  );
+  ).filter((id) => !/^sap-emp-\d+$/i.test(id));
 
   // 1. Wipe all staff accounts and users
   saveStoredUsers([]);

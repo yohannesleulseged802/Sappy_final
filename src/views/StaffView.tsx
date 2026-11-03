@@ -115,11 +115,18 @@ export const StaffView: React.FC<StaffViewProps> = ({
       );
       storage.addAuditLog('STAFF_UPDATED', 'AUTH', `Staff account ${name} updated by ${currentStaff.name}.`);
     } else {
+      const cleanEmail = (email.trim() || `${name.toLowerCase().replace(/\s+/g, '')}@sappystationary.com`).toLowerCase();
+      const existingMatch = staffList.find((s) => s.email && s.email.toLowerCase() === cleanEmail);
+      if (existingMatch) {
+        alert(`An account with email "${cleanEmail}" already exists (${existingMatch.name}).`);
+        return;
+      }
+
       const newStaff: Staff = {
         id: `staff-${Date.now()}`,
-        employeeId: `SAP-EMP-${staffList.length + 1001}`,
+        employeeId: storage.generateNextEmployeeId(staffList),
         name: name.trim(),
-        email: email.trim() || `${name.toLowerCase().replace(/\s+/g, '')}@sappystationary.com`,
+        email: cleanEmail,
         phone: phone.trim() || undefined,
         jobTitle: jobTitle.trim() || undefined,
         role,

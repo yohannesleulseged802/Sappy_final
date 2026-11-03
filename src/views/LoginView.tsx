@@ -156,40 +156,56 @@ export const LoginView: React.FC<LoginViewProps> = ({onLoginSuccess, isOnline}) 
     const unsubscribeFirestore = storage.syncStaffWithFirestore((syncedList) => {
       if (!isMounted) return;
       const activeStaff = syncedList.filter((s) => s.active && s.approvalStatus !== 'pending');
-      setStaffList(activeStaff);
       if (activeStaff.length > 0) {
+        setStaffList(activeStaff);
         setSelectedStaffId((prev) => (prev && activeStaff.some((s) => s.id === prev) ? prev : activeStaff[0].id));
         setUsername((prev) => prev || activeStaff[0].email || activeStaff[0].username || '');
       } else {
-        setSelectedStaffId('');
-        setUsername('');
-        setActiveAuthTab('signup');
+        const localActive = storage.getStaffList().filter((s) => s.active && s.approvalStatus !== 'pending');
+        if (localActive.length > 0) {
+          setStaffList(localActive);
+          setSelectedStaffId((prev) => (prev && localActive.some((s) => s.id === prev) ? prev : localActive[0].id));
+          setUsername((prev) => prev || localActive[0].email || localActive[0].username || '');
+        } else {
+          setStaffList([]);
+          setSelectedStaffId('');
+          setUsername('');
+          setActiveAuthTab('signup');
+        }
       }
     });
 
     // 2. Backend sync fallback
     storage.syncStaffFromBackend().then((res) => {
       if (!isMounted) return;
-      if (res.staffList.length > 0) {
-        const activeStaff = res.staffList.filter((s) => s.active && s.approvalStatus !== 'pending');
+      const activeStaff = (res.staffList && res.staffList.length > 0 ? res.staffList : storage.getStaffList())
+        .filter((s) => s.active && s.approvalStatus !== 'pending');
+      if (activeStaff.length > 0) {
         setStaffList(activeStaff);
         setSelectedStaffId((prev) => (prev && activeStaff.some((s) => s.id === prev) ? prev : activeStaff[0].id));
         setUsername((prev) => prev || activeStaff[0].email || activeStaff[0].username || '');
       } else {
-        setSelectedStaffId('');
-        setUsername('');
-        setActiveAuthTab('signup');
+        const localActive = storage.getStaffList().filter((s) => s.active && s.approvalStatus !== 'pending');
+        if (localActive.length > 0) {
+          setStaffList(localActive);
+        } else {
+          setSelectedStaffId('');
+          setUsername('');
+          setActiveAuthTab('signup');
+        }
       }
     });
 
-    // 3. Periodic 10-second auto-sync updates so any approvals or registrations from other terminals reflect automatically
+    // 3. Periodic auto-sync updates so any approvals or registrations from other terminals reflect automatically
     const unsubscribeAutoSync = storage.subscribeAutoSync(() => {
       if (!isMounted) return;
       storage.syncStaffFromBackend().then((res) => {
         if (!isMounted) return;
         if (res.staffList && res.staffList.length > 0) {
           const activeStaff = res.staffList.filter((s) => s.active && s.approvalStatus !== 'pending');
-          setStaffList(activeStaff);
+          if (activeStaff.length > 0) {
+            setStaffList(activeStaff);
+          }
         } else {
           const localActive = storage.getStaffList().filter((s) => s.active && s.approvalStatus !== 'pending');
           if (localActive.length > 0) {
@@ -202,11 +218,9 @@ export const LoginView: React.FC<LoginViewProps> = ({onLoginSuccess, isOnline}) 
     const handleAutoSynced = () => {
       if (!isMounted) return;
       const currentList = storage.getStaffList().filter((s) => s.active && s.approvalStatus !== 'pending');
-      setStaffList(currentList);
-      if (currentList.length === 0) {
-        setSelectedStaffId('');
-        setUsername('');
-        setActiveAuthTab('signup');
+      if (currentList.length > 0) {
+        setStaffList(currentList);
+        setSelectedStaffId((prev) => (prev && currentList.some((s) => s.id === prev) ? prev : currentList[0].id));
       }
     };
     window.addEventListener('sappy-auto-synced', handleAutoSynced);

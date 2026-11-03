@@ -322,10 +322,22 @@ class StorageService {
   addDeletedUserId(idOrEmail?: string) {
     if (!this.isBrowser() || !idOrEmail) return;
     const clean = idOrEmail.trim().toLowerCase();
+    // NEVER tombstone sequential employee IDs (e.g. SAP-EMP-1001) as they are reused in fresh deployments
+    if (/^sap-emp-\d+$/i.test(clean)) return;
     const current = this.getDeletedUserIds();
     if (!current.includes(clean)) {
       current.push(clean);
       this.setDeletedUserIds(current);
+    }
+  }
+
+  removeDeletedUserId(idOrEmail?: string) {
+    if (!this.isBrowser() || !idOrEmail) return;
+    const clean = idOrEmail.trim().toLowerCase();
+    const current = this.getDeletedUserIds();
+    const filtered = current.filter((id) => id !== clean);
+    if (filtered.length !== current.length) {
+      this.setDeletedUserIds(filtered);
     }
   }
 
@@ -336,6 +348,94 @@ class StorageService {
     if (email && deleted.includes(email.toLowerCase())) return true;
     if (username && deleted.includes(username.toLowerCase())) return true;
     return false;
+  }
+
+  // --- Collision-Free Unique Employee ID Sequence (SAP-EMP-1001, SAP-EMP-1002...) ---
+  generateNextEmployeeId(providedList?: Staff[]): string {
+    const list = providedList || this.getStaffList();
+    const existingSeqs = list
+      .map((s) => {
+        const m = (s.employeeId || '').match(/SAP-EMP-(\d+)/i);
+        return m ? parseInt(m[1], 10) : 0;
+      })
+      .filter((n) => !isNaN(n) && n > 0);
+
+    const maxSeq = existingSeqs.length > 0 ? Math.max(...existingSeqs) : 1000;
+    return `SAP-EMP-${maxSeq + 1}`;
+  }
+
+  // --- Strict Deduplication & Canonical Staff Identity (Guarantees 1 Account per Email/Username) ---
+  deduplicateStaffList(list: Staff[]): Staff[] {
+    if (!Array.isArray(list) || list.length === 0) return [];
+
+    const map = new Map<string, Staff>();
+
+    // Sort chronologically (oldest to newest) so newest updates override stale fields
+    const sorted = [...list].sort((a, b) => {
+      const timeA = new Date(a.updatedAt || a.createdAt || 0).getTime();
+      const timeB = new Date(b.updatedAt || b.createdAt || 0).getTime();
+      return timeA - timeB;
+    });
+
+    for (const s of sorted) {
+      const cleanEmail = (s.email || '').trim().toLowerCase();
+      const cleanUsername = (s.username || '').trim().toLowerCase();
+      // Primary identity key: Email if present, otherwise username, otherwise unique id
+      const key = cleanEmail || cleanUsername || s.id;
+
+      const existing = map.get(key);
+      if (existing) {
+        // Merge records preserving administrative authorization, active session, and credentials
+        const isAdmin = existing.role === 'admin' || s.role === 'admin';
+        const isApproved = existing.approvalStatus === 'approved' || s.approvalStatus === 'approved';
+        const isActive = existing.active || s.active;
+
+        map.set(key, {
+          ...existing,
+          ...s,
+          role: isAdmin ? 'admin' : (s.role || existing.role),
+          approvalStatus: isApproved ? 'approved' : s.approvalStatus,
+          active: isActive,
+          password: s.password || existing.password,
+          pin: (s.pin && s.pin.length === 4) ? s.pin : existing.pin,
+          email: cleanEmail || existing.email,
+          username: cleanUsername || existing.username,
+          employeeId: existing.employeeId || s.employeeId,
+        });
+      } else {
+        map.set(key, {
+          ...s,
+          email: cleanEmail,
+          username: cleanUsername,
+        });
+      }
+    }
+
+    const deduplicated = Array.from(map.values());
+
+    // Deterministically verify and assign distinct employee IDs (SAP-EMP-1001, SAP-EMP-1002, etc.)
+    const usedEmpIds = new Set<string>();
+    let nextSeq = 1001;
+
+    deduplicated.forEach((staff) => {
+      let empId = (staff.employeeId || '').trim().toUpperCase();
+      if (!empId || usedEmpIds.has(empId) || !/^SAP-EMP-\d+$/.test(empId)) {
+        while (usedEmpIds.has(`SAP-EMP-${nextSeq}`)) {
+          nextSeq++;
+        }
+        empId = `SAP-EMP-${nextSeq}`;
+        nextSeq++;
+      }
+      usedEmpIds.add(empId);
+      staff.employeeId = empId;
+      const match = empId.match(/(\d+)$/);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (num >= nextSeq) nextSeq = num + 1;
+      }
+    });
+
+    return deduplicated;
   }
 
   // --- Staff & Current User ---
@@ -355,13 +455,12 @@ class StorageService {
         }
 
         const uid = (s.id || '').toLowerCase();
-        const empId = (s.employeeId || '').toLowerCase();
         const email = (s.email || '').toLowerCase();
         const username = (s.username || '').toLowerCase();
 
+        // Sequential employeeId (e.g. SAP-EMP-1001) is strictly NOT checked against tombstones
         const isTombstoned =
           (uid && deletedIds.includes(uid)) ||
-          (empId && deletedIds.includes(empId)) ||
           (email && deletedIds.includes(email)) ||
           (username && deletedIds.includes(username));
 
@@ -380,10 +479,13 @@ class StorageService {
         return true;
       });
 
-      if (filtered.length !== list.length) {
-        localStorage.setItem(STORAGE_KEYS.STAFF, JSON.stringify(filtered));
+      // Always guarantee clean deduplication and unique sequential employee IDs
+      const deduplicated = this.deduplicateStaffList(filtered);
+
+      if (deduplicated.length !== list.length || JSON.stringify(deduplicated) !== val) {
+        localStorage.setItem(STORAGE_KEYS.STAFF, JSON.stringify(deduplicated));
       }
-      return filtered;
+      return deduplicated;
     } catch {
       return INITIAL_STAFF;
     }
@@ -402,13 +504,11 @@ class StorageService {
       }
 
       const uid = (s.id || '').toLowerCase();
-      const empId = (s.employeeId || '').toLowerCase();
       const email = (s.email || '').toLowerCase();
       const username = (s.username || '').toLowerCase();
 
       const isTombstoned =
         (uid && deletedIds.includes(uid)) ||
-        (empId && deletedIds.includes(empId)) ||
         (email && deletedIds.includes(email)) ||
         (username && deletedIds.includes(username));
 
@@ -427,7 +527,8 @@ class StorageService {
       return true;
     });
 
-    localStorage.setItem(STORAGE_KEYS.STAFF, JSON.stringify(valid));
+    const deduplicated = this.deduplicateStaffList(valid);
+    localStorage.setItem(STORAGE_KEYS.STAFF, JSON.stringify(deduplicated));
   }
 
   // --- Firebase Cloud Database Cross-Device Synchronization ---
@@ -525,12 +626,10 @@ class StorageService {
 
     const validLocal = localList.filter((l) => {
       const uid = (l.id || '').toLowerCase();
-      const empId = (l.employeeId || '').toLowerCase();
       const email = (l.email || '').toLowerCase();
       const username = (l.username || '').toLowerCase();
       const isTombstoned =
         (uid && deletedIds.includes(uid)) ||
-        (empId && deletedIds.includes(empId)) ||
         (email && deletedIds.includes(email)) ||
         (username && deletedIds.includes(username));
       if (isTombstoned) {
@@ -540,28 +639,56 @@ class StorageService {
       return true;
     });
 
-    // Remote Firestore users mapped with local passwords
-    const staffList: Staff[] = remoteStaff.map((r) => {
-      const localMatch = validLocal.find(
-        (l) => l.id === r.id || (l.email && r.email && l.email.toLowerCase() === r.email.toLowerCase())
-      );
-      return {
-        ...r,
-        password: r.password || localMatch?.password || '',
-      };
+    // 1. Group remote docs by email/username to detect and eliminate duplicate Firestore documents
+    const seenEmails = new Map<string, string>(); // normalizedKey -> canonicalDocId
+    const ghostDocIdsToDelete: string[] = [];
+    const cleanRemote: Staff[] = [];
+
+    // Sort remoteStaff so newer documents are preferred as canonical
+    const sortedRemote = [...remoteStaff].sort((a, b) => {
+      const timeA = new Date(a.updatedAt || a.createdAt || 0).getTime();
+      const timeB = new Date(b.updatedAt || b.createdAt || 0).getTime();
+      return timeB - timeA;
     });
 
-    // Keep any valid local accounts not yet synced to remote
+    sortedRemote.forEach((r) => {
+      const email = (r.email || '').trim().toLowerCase();
+      const username = (r.username || '').trim().toLowerCase();
+      const key = email || username || r.id;
+
+      if (seenEmails.has(key)) {
+        // Redundant duplicate document in Cloud Firestore! Mark for deletion
+        ghostDocIdsToDelete.push(r.id);
+      } else {
+        seenEmails.set(key, r.id);
+        const localMatch = validLocal.find(
+          (l) => l.id === r.id || (l.email && r.email && l.email.toLowerCase() === email)
+        );
+        cleanRemote.push({
+          ...r,
+          password: r.password || localMatch?.password || '',
+        });
+      }
+    });
+
+    // 2. Asynchronously purge ghost duplicate documents from Cloud Firestore
+    ghostDocIdsToDelete.forEach((ghostId) => {
+      this.deleteStaffFromFirestore(ghostId).catch(() => {});
+    });
+
+    // 3. Keep any valid local accounts not yet present in remote
     validLocal.forEach((loc) => {
-      const exists = staffList.some(
-        (s) => s.id === loc.id || (s.email && loc.email && s.email.toLowerCase() === loc.email.toLowerCase())
-      );
-      if (!exists) {
-        staffList.push(loc);
+      const locEmail = (loc.email || '').trim().toLowerCase();
+      const locUser = (loc.username || '').trim().toLowerCase();
+      const locKey = locEmail || locUser || loc.id;
+      if (!seenEmails.has(locKey)) {
+        cleanRemote.push(loc);
         this.pushStaffToFirestore(loc).catch(() => {});
       }
     });
 
+    // 4. Strict deduplication & sequential employee IDs assignment
+    const staffList = this.deduplicateStaffList(cleanRemote);
     this.saveStaffList(staffList);
 
     if (this.isBrowser()) {
@@ -659,13 +786,11 @@ class StorageService {
     const deletedIds = this.getDeletedUserIds();
     const valid = staffList.filter((s) => {
       const uid = (s.id || '').toLowerCase();
-      const empId = (s.employeeId || '').toLowerCase();
       const email = (s.email || '').toLowerCase();
       const username = (s.username || '').toLowerCase();
 
       if (
         (uid && deletedIds.includes(uid)) ||
-        (empId && deletedIds.includes(empId)) ||
         (email && deletedIds.includes(email)) ||
         (username && deletedIds.includes(username))
       ) {
@@ -679,12 +804,13 @@ class StorageService {
       return true;
     });
 
-    if (valid.length === 0 && staffList.length > 0) return;
+    const deduplicated = this.deduplicateStaffList(valid);
+    if (deduplicated.length === 0 && staffList.length > 0) return;
     try {
       fetch('/api/pos/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ users: valid }),
+        body: JSON.stringify({ users: deduplicated }),
       }).catch(() => {});
     } catch {}
   }
@@ -699,11 +825,10 @@ class StorageService {
     const cleanId = (newStaff.id || '').trim().toLowerCase();
     const cleanEmail = (newStaff.email || '').trim().toLowerCase();
     const cleanUsername = (newStaff.username || '').trim().toLowerCase();
-    const cleanEmpId = (newStaff.employeeId || '').trim().toLowerCase();
 
     const curDeleted = this.getDeletedUserIds();
     const filteredDeleted = curDeleted.filter(
-      (d) => d !== cleanId && d !== cleanEmail && d !== cleanUsername && d !== cleanEmpId
+      (d) => d !== cleanId && d !== cleanEmail && d !== cleanUsername
     );
     if (filteredDeleted.length !== curDeleted.length) {
       this.setDeletedUserIds(filteredDeleted);
@@ -713,26 +838,34 @@ class StorageService {
     const existingIndex = list.findIndex(
       (s) =>
         s.id === newStaff.id ||
-        (s.email && newStaff.email && s.email.toLowerCase() === newStaff.email.toLowerCase()) ||
-        (s.username && newStaff.username && s.username.toLowerCase() === newStaff.username.toLowerCase())
+        (s.email && cleanEmail && s.email.toLowerCase() === cleanEmail) ||
+        (s.username && cleanUsername && s.username.toLowerCase() === cleanUsername)
     );
+
     if (existingIndex >= 0) {
+      // Update in-place, preserving employeeId and original password if not provided
       list[existingIndex] = {
         ...list[existingIndex],
         ...newStaff,
+        employeeId: list[existingIndex].employeeId || newStaff.employeeId,
         password: newStaff.password || list[existingIndex].password,
+        pin: (newStaff.pin && newStaff.pin.length === 4) ? newStaff.pin : list[existingIndex].pin,
       };
     } else {
       list.push(newStaff);
     }
-    this.saveStaffList(list);
+
+    const deduplicated = this.deduplicateStaffList(list);
+    this.saveStaffList(deduplicated);
+
     if (this.isBrowser()) {
-      if (newStaff.role === 'admin' || list.length > 0) {
+      if (newStaff.role === 'admin' || deduplicated.length > 0) {
         localStorage.setItem(STORAGE_KEYS.STORE_INITIALIZED, 'true');
         localStorage.setItem('sappy_initial_signup_completed', 'true');
       }
     }
-    this.pushStaffToServer(list);
+
+    this.pushStaffToServer(deduplicated);
     this.pushStaffToFirestore(newStaff);
   }
 
@@ -1407,14 +1540,12 @@ class StorageService {
 
     const mappedUsers: Staff[] = serverUsers
       .filter((u: any) => {
-        const uid = (u.uid || u.id || u.employeeId || '').toLowerCase();
-        const empId = (u.employeeId || '').toLowerCase();
+        const uid = (u.uid || u.id || '').toLowerCase();
         const email = (u.email || '').toLowerCase();
         const username = (u.username || '').toLowerCase();
 
         const isTombstoned =
           (uid && deletedIds.includes(uid)) ||
-          (empId && deletedIds.includes(empId)) ||
           (email && deletedIds.includes(email)) ||
           (username && deletedIds.includes(username));
 
@@ -1430,7 +1561,7 @@ class StorageService {
         return true;
       })
       .map((u: any) => {
-        const uid = u.uid || u.id || u.employeeId;
+        const uid = u.uid || u.id;
         const email = (u.email || '').toLowerCase();
         const username = (u.username || '').toLowerCase();
         const existingLocal = localList.find(
@@ -1478,7 +1609,7 @@ class StorageService {
       return !this.isUserDeleted(l.id, l.email, l.username);
     });
 
-    return [...mappedUsers, ...unsynced];
+    return this.deduplicateStaffList([...mappedUsers, ...unsynced]);
   }
 
   async syncStaffFromBackend(): Promise<{ hasAdmin: boolean; isInitialized: boolean; staffList: Staff[] }> {
