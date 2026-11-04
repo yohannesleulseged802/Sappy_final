@@ -19,6 +19,7 @@ import {
 import {Product, StoreSettings, CodeType, LabelItem} from '../../types';
 import {storage} from '../../services/storage';
 import {ExportService} from '../../services/export';
+import {toast} from '../../services/toast';
 
 export interface SelectedItemConfig {
   product: Product;
@@ -400,8 +401,9 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({
         showProductName: true,
         showBorder: true,
       });
+      toast.success(`Exported ${itemsToExport.length} labels as A4 sheet!`);
     } catch (err: any) {
-      alert(err?.message || 'Failed to export PDF.');
+      toast.error(err?.message || 'Failed to export PDF.');
     } finally {
       setIsExportingPDF(false);
     }

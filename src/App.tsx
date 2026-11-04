@@ -24,6 +24,7 @@ import {MobileNav} from './components/layout/MobileNav';
 import {PinModal} from './components/common/PinModal';
 import {KeyboardShortcutsModal} from './components/common/KeyboardShortcutsModal';
 import {UserProfileModal} from './components/common/UserProfileModal';
+import {ToastContainer} from './components/common/ToastContainer';
 
 // Views
 import {LoginView} from './views/LoginView';
@@ -315,10 +316,13 @@ export default function App() {
   // ================= SCENARIO 1: NOT AUTHENTICATED -> RENDER LOGIN VIEW =================
   if (!isAuthenticated) {
     return (
-      <LoginView
-        onLoginSuccess={handleLoginSuccess}
-        isOnline={isOnline}
-      />
+      <>
+        <ToastContainer />
+        <LoginView
+          onLoginSuccess={handleLoginSuccess}
+          isOnline={isOnline}
+        />
+      </>
     );
   }
 
@@ -487,6 +491,9 @@ export default function App() {
           refreshAllData();
         }}
       />
+
+      {/* 8. Floating Notification Toasts */}
+      <ToastContainer />
     </div>
   );
 }

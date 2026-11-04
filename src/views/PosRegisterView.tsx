@@ -42,6 +42,7 @@ import {
 import {storage} from '../services/storage';
 import {sound} from '../services/sound';
 import {ExportService} from '../services/export';
+import {toast} from '../services/toast';
 import {CameraScannerModal} from '../components/common/CameraScannerModal';
 import {BarcodeRenderer} from '../components/common/BarcodeRenderer';
 import {IndividualCodeViewModal} from '../components/common/IndividualCodeViewModal';
@@ -386,7 +387,7 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
   const handleCompleteCheckout = () => {
     if (totalEnteredPayment < grandTotal - 0.01) {
       sound.playError();
-      alert(`Payment is incomplete. Remaining amount: ${remainingAmount.toFixed(2)} ${settings.currency}`);
+      toast.error(`Payment is incomplete. Remaining amount: ${remainingAmount.toFixed(2)} ${settings.currency}`);
       return;
     }
 
@@ -394,13 +395,13 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
     if (creditAmount > 0) {
       if (!selectedCustomer) {
         sound.playError();
-        alert('Please assign a customer account before processing store credit.');
+        toast.error('Please assign a customer account before processing store credit.');
         return;
       }
       const newPotentialBalance = selectedCustomer.currentBalance + creditAmount;
       if (newPotentialBalance > selectedCustomer.creditLimit) {
         sound.playError();
-        alert(
+        toast.error(
           `Credit limit exceeded for ${selectedCustomer.name}! Limit: ${selectedCustomer.creditLimit} ${settings.currency}, Current Balance: ${selectedCustomer.currentBalance} ${settings.currency}. Max credit allowed: ${(selectedCustomer.creditLimit - selectedCustomer.currentBalance).toFixed(2)} ${settings.currency}`
         );
         return;

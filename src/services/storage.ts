@@ -23,6 +23,8 @@ import {
   deleteDoc,
   onSnapshot,
   writeBatch,
+  query,
+  where,
 } from 'firebase/firestore';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 
@@ -465,15 +467,16 @@ class StorageService {
           (username && deletedIds.includes(username));
 
         if (isTombstoned) {
-          if (wipeTs > 0) {
-            const t = s.createdAt
-              ? new Date(s.createdAt).getTime()
-              : s.updatedAt
-              ? new Date(s.updatedAt).getTime()
-              : 0;
-            if (t > wipeTs) return true;
-          }
           return false;
+        }
+
+        if (wipeTs > 0) {
+          const t = s.createdAt
+            ? new Date(s.createdAt).getTime()
+            : s.updatedAt
+            ? new Date(s.updatedAt).getTime()
+            : 0;
+          return t > wipeTs;
         }
 
         return true;
@@ -513,15 +516,16 @@ class StorageService {
         (username && deletedIds.includes(username));
 
       if (isTombstoned) {
-        if (wipeTs > 0) {
-          const t = s.createdAt
-            ? new Date(s.createdAt).getTime()
-            : s.updatedAt
-            ? new Date(s.updatedAt).getTime()
-            : 0;
-          if (t > wipeTs) return true;
-        }
         return false;
+      }
+
+      if (wipeTs > 0) {
+        const t = s.createdAt
+          ? new Date(s.createdAt).getTime()
+          : s.updatedAt
+          ? new Date(s.updatedAt).getTime()
+          : 0;
+        return t > wipeTs;
       }
 
       return true;
@@ -609,10 +613,56 @@ class StorageService {
     }
   }
 
-  async deleteStaffFromFirestore(staffId: string): Promise<void> {
+  async deleteStaffFromFirestore(staffId: string, email?: string, username?: string): Promise<void> {
     if (this.isFirestoreQuotaExceeded) return;
     try {
-      await deleteDoc(doc(db, 'users', staffId));
+      if (staffId) {
+        await deleteDoc(doc(db, 'users', staffId)).catch(() => {});
+      }
+
+      const cleanEmail = (email || '').trim().toLowerCase();
+      const cleanUsername = (username || '').trim().toLowerCase();
+      const cleanStaffId = (staffId || '').trim().toLowerCase();
+
+      const usersCol = collection(db, 'users');
+      const snap = await getDocs(usersCol).catch(() => null);
+
+      if (snap && !snap.empty) {
+        const batch = writeBatch(db);
+        let batchCount = 0;
+
+        snap.forEach((d) => {
+          const data = d.data();
+          const docEmail = (data.email || '').trim().toLowerCase();
+          const docUsername = (data.username || '').trim().toLowerCase();
+          const docUid = (data.uid || data.id || d.id || '').trim().toLowerCase();
+
+          const isMatch =
+            (cleanStaffId && (docUid === cleanStaffId || d.id.toLowerCase() === cleanStaffId)) ||
+            (cleanEmail && docEmail === cleanEmail) ||
+            (cleanUsername && docUsername === cleanUsername);
+
+          if (isMatch) {
+            batch.delete(d.ref);
+            batchCount++;
+          }
+        });
+
+        if (batchCount > 0) {
+          await batch.commit().catch(() => {});
+        }
+      }
+
+      // Also persist tombstones to Firestore system/meta so other terminals immediately tombstone
+      const curDeleted = this.getDeletedUserIds();
+      await setDoc(
+        doc(db, 'system', 'meta'),
+        {
+          deletedUserIds: curDeleted,
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      ).catch(() => {});
     } catch (err) {
       if (this.handleFirestoreQuotaError(err)) return;
       console.warn('Firestore deleteStaff notice:', err);
@@ -633,8 +683,11 @@ class StorageService {
         (email && deletedIds.includes(email)) ||
         (username && deletedIds.includes(username));
       if (isTombstoned) {
+        return false;
+      }
+      if (wipeTs > 0) {
         const t = l.createdAt ? new Date(l.createdAt).getTime() : l.updatedAt ? new Date(l.updatedAt).getTime() : 0;
-        return wipeTs > 0 && t > wipeTs;
+        return t > wipeTs;
       }
       return true;
     });
@@ -654,7 +707,18 @@ class StorageService {
     sortedRemote.forEach((r) => {
       const email = (r.email || '').trim().toLowerCase();
       const username = (r.username || '').trim().toLowerCase();
+      const uid = (r.id || '').trim().toLowerCase();
       const key = email || username || r.id;
+
+      const isTombstoned =
+        (uid && deletedIds.includes(uid)) ||
+        (email && deletedIds.includes(email)) ||
+        (username && deletedIds.includes(username));
+
+      if (isTombstoned) {
+        ghostDocIdsToDelete.push(r.id);
+        return;
+      }
 
       if (seenEmails.has(key)) {
         // Redundant duplicate document in Cloud Firestore! Mark for deletion
@@ -721,15 +785,11 @@ class StorageService {
 
         const isTombstoned =
           (uid && deletedIds.includes(uid)) ||
-          (empId && deletedIds.includes(empId)) ||
           (email && deletedIds.includes(email)) ||
           (username && deletedIds.includes(username));
 
         if (isTombstoned) {
-          const t = s.createdAt ? new Date(s.createdAt).getTime() : s.updatedAt ? new Date(s.updatedAt).getTime() : 0;
-          if (wipeTs > 0 && t > wipeTs) {
-            remoteStaff.push(s);
-          }
+          deleteDoc(doc(db, 'users', docSnap.id)).catch(() => {});
           return;
         }
 
@@ -810,7 +870,7 @@ class StorageService {
       fetch('/api/pos/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ users: deduplicated }),
+        body: JSON.stringify({ users: deduplicated, deletedUserIds: deletedIds }),
       }).catch(() => {});
     } catch {}
   }
@@ -949,30 +1009,76 @@ class StorageService {
     }
   }
 
-  deleteStaff(staffId: string): boolean {
+  async deleteStaff(staffId: string): Promise<boolean> {
     const list = this.getStaffList();
-    const target = list.find((s) => s.id === staffId || s.employeeId === staffId);
+    const cleanStaffId = (staffId || '').trim().toLowerCase();
+    const target = list.find(
+      (s) =>
+        s.id === staffId ||
+        s.employeeId === staffId ||
+        (s.id && s.id.toLowerCase() === cleanStaffId) ||
+        (s.employeeId && s.employeeId.toLowerCase() === cleanStaffId) ||
+        (s.email && s.email.toLowerCase() === cleanStaffId) ||
+        (s.username && s.username.toLowerCase() === cleanStaffId)
+    );
     if (!target) return false;
-    this.addDeletedUserId(staffId);
-    this.addDeletedUserId(target.id);
-    if (target.employeeId) this.addDeletedUserId(target.employeeId);
-    if (target.email) this.addDeletedUserId(target.email);
-    if (target.username) this.addDeletedUserId(target.username);
 
-    const remaining = list.filter((s) => s.id !== staffId && s.employeeId !== staffId);
+    const targetEmail = (target.email || '').trim().toLowerCase();
+    const targetUsername = (target.username || '').trim().toLowerCase();
+    const targetId = (target.id || '').trim().toLowerCase();
+
+    // 1. Permanently register tombstones in local storage immediately
+    if (cleanStaffId) this.addDeletedUserId(cleanStaffId);
+    if (targetId) this.addDeletedUserId(targetId);
+    if (targetEmail) this.addDeletedUserId(targetEmail);
+    if (targetUsername) this.addDeletedUserId(targetUsername);
+
+    // 2. Remove ANY record matching target id, email, username, or staffId from local storage
+    const remaining = list.filter((s) => {
+      const sId = (s.id || '').toLowerCase();
+      const sEmail = (s.email || '').toLowerCase();
+      const sUser = (s.username || '').toLowerCase();
+
+      if (s.id === staffId || s.id === target.id) return false;
+      if (cleanStaffId && sId === cleanStaffId) return false;
+      if (targetEmail && sEmail === targetEmail) return false;
+      if (targetUsername && sUser === targetUsername) return false;
+      return true;
+    });
+
     this.saveStaffList(remaining);
     this.addAuditLog('STAFF_DELETED', 'AUTH', `Staff account ${target.name} (${target.role}) deleted.`);
+
+    // 3. Delete from backend server and update server system_meta.json
     try {
-      fetch('/api/auth/approve', {
+      await fetch('/api/auth/approve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           staffId: target.id,
+          email: target.email,
+          username: target.username,
           action: 'delete',
         }),
       }).catch(() => {});
     } catch {}
-    this.deleteStaffFromFirestore(staffId);
+
+    // 4. Delete from Cloud Firestore and record tombstones in Firestore system/meta
+    try {
+      await Promise.all([
+        this.deleteStaffFromFirestore(staffId, target.email, target.username),
+        this.deleteStaffFromFirestore(target.id, target.email, target.username),
+      ]);
+    } catch (fbErr) {
+      console.warn('Firestore staff delete background warning:', fbErr);
+    }
+
+    // 5. Push remaining to server sync with deletedUserIds
+    this.pushStaffToServer(remaining);
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('sappy-auto-synced'));
+    }
     return true;
   }
 
@@ -1550,12 +1656,16 @@ class StorageService {
           (username && deletedIds.includes(username));
 
         if (isTombstoned) {
+          return false;
+        }
+
+        if (wipeTs > 0) {
           const createdMs = u.createdAt
             ? new Date(u.createdAt).getTime()
             : u.updatedAt
             ? new Date(u.updatedAt).getTime()
             : 0;
-          return wipeTs > 0 && createdMs > wipeTs;
+          return createdMs > wipeTs;
         }
 
         return true;
@@ -3588,6 +3698,21 @@ class StorageService {
 
     const handleMeta = (data: any) => {
       if (!data) return;
+
+      if (Array.isArray(data?.deletedUserIds) && data.deletedUserIds.length > 0) {
+        const cur = this.getDeletedUserIds();
+        const incoming = data.deletedUserIds
+          .map((x: string) => String(x).trim().toLowerCase())
+          .filter((x: string) => Boolean(x) && !/^sap-emp-\d+$/i.test(x));
+        const merged = Array.from(new Set([...cur, ...incoming]));
+        if (merged.length !== cur.length) {
+          this.setDeletedUserIds(merged);
+          // Purge newly tombstoned users locally
+          const staffList = this.getStaffList();
+          this.saveStaffList(staffList);
+        }
+      }
+
       const remoteWipeTs = Number(data?.lastWipeTimestamp || 0);
       const remoteCatalogWipeTs = Number(data?.lastCatalogWipeTimestamp || remoteWipeTs);
       const localKnownWipeTs = Number(localStorage.getItem('sappy_last_known_wipe_ts') || 0);

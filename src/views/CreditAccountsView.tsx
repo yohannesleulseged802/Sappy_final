@@ -20,6 +20,7 @@ import {Customer, StoreSettings, Staff, CreditTransaction} from '../types';
 import {storage} from '../services/storage';
 import {sound} from '../services/sound';
 import {ExportService} from '../services/export';
+import {toast} from '../services/toast';
 
 interface CreditAccountsViewProps {
   settings: StoreSettings;
@@ -100,7 +101,7 @@ export const CreditAccountsView: React.FC<CreditAccountsViewProps> = ({
   const handleSaveCustomer = (e: React.FormEvent) => {
     e.preventDefault();
     if (!custName.trim() || !custPhone.trim()) {
-      alert('Customer Name and Phone Number are required.');
+      toast.error('Customer Name and Phone Number are required.');
       return;
     }
 

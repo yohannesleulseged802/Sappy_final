@@ -24,6 +24,7 @@ import QRCode from 'qrcode';
 import {Product, ProductCode, StoreSettings, CodeType, LabelItem} from '../../types';
 import {sound} from '../../services/sound';
 import {ExportService} from '../../services/export';
+import {toast} from '../../services/toast';
 
 interface IndividualCodeViewModalProps {
   isOpen: boolean;
@@ -240,7 +241,7 @@ export const IndividualCodeViewModal: React.FC<IndividualCodeViewModalProps> = (
         a.click();
       }
     } catch (e) {
-      alert('Unable to download PNG image.');
+      toast.error('Unable to download PNG image.');
     }
   };
 
@@ -305,8 +306,9 @@ export const IndividualCodeViewModal: React.FC<IndividualCodeViewModalProps> = (
           barcodeFormat: selectedFormat,
         }
       );
+      toast.success('Individual label sheet exported successfully!');
     } catch (err: any) {
-      alert(err?.message || 'Failed to generate PDF.');
+      toast.error(err?.message || 'Failed to generate PDF.');
     } finally {
       setIsExportingPDF(false);
     }

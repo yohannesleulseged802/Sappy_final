@@ -828,14 +828,87 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
 // -----------------------------------------------------------------------------
 
 app.get('/api/auth/users', (req: Request, res: Response) => {
-  const users = loadStoredUsers().map(({ passwordHash: _, ...u }) => u);
-  res.json({ success: true, users });
+  const meta = loadSystemMeta();
+  const wipeTs = Number(meta.lastWipeTimestamp || 0);
+  const deletedIds = (meta.deletedUserIds || []).map((id: string) => id.toLowerCase());
+
+  const rawUsers = loadStoredUsers();
+  const validUsers = rawUsers.filter((u) => {
+    const uid = (u.uid || '').toLowerCase();
+    const email = (u.email || '').toLowerCase();
+    const username = (u.username || '').toLowerCase();
+
+    const isTombstoned =
+      (uid && deletedIds.includes(uid)) ||
+      (email && deletedIds.includes(email)) ||
+      (username && deletedIds.includes(username));
+
+    if (isTombstoned) {
+      return false;
+    }
+
+    if (wipeTs > 0) {
+      return (u.createdAt ? new Date(u.createdAt).getTime() : 0) > wipeTs;
+    }
+    return true;
+  });
+
+  const users = validUsers.map(({ passwordHash: _, ...u }) => u);
+  res.json({ success: true, users, deletedUserIds: meta.deletedUserIds || [] });
 });
 
 app.post('/api/auth/approve', (req: Request, res: Response) => {
-  const { staffId, action, role, approverName } = req.body;
+  const { staffId, email, username, action, role, approverName } = req.body;
   const users = loadStoredUsers();
-  const target = users.find((u) => u.uid === staffId || u.employeeId === staffId || u.email === staffId);
+  const cleanId = (staffId || '').trim().toLowerCase();
+  const cleanEmail = (email || '').trim().toLowerCase();
+  const cleanUsername = (username || '').trim().toLowerCase();
+
+  const isUserMatch = (u: StoredUser) => {
+    const uUid = (u.uid || '').toLowerCase();
+    const uEmp = (u.employeeId || '').toLowerCase();
+    const uEmail = (u.email || '').toLowerCase();
+    const uUser = (u.username || '').toLowerCase();
+
+    return Boolean(
+      (cleanId && (uUid === cleanId || uEmp === cleanId || uEmail === cleanId || uUser === cleanId)) ||
+      (cleanEmail && uEmail === cleanEmail) ||
+      (cleanUsername && uUser === cleanUsername)
+    );
+  };
+
+  const matches = users.filter(isUserMatch);
+  const target = matches[0];
+
+  if (action === 'delete') {
+    const filtered = users.filter((u) => !isUserMatch(u));
+    saveStoredUsers(filtered);
+
+    const meta = loadSystemMeta();
+    const deleted = (meta.deletedUserIds || []).map((x: string) => x.toLowerCase());
+    const toAdd = new Set<string>();
+
+    if (cleanId && !/^sap-emp-\d+$/i.test(cleanId)) toAdd.add(cleanId);
+    if (cleanEmail) toAdd.add(cleanEmail);
+    if (cleanUsername) toAdd.add(cleanUsername);
+
+    matches.forEach((m) => {
+      if (m.uid && !/^sap-emp-\d+$/i.test(m.uid)) toAdd.add(m.uid.toLowerCase());
+      if (m.email) toAdd.add(m.email.toLowerCase());
+      if (m.username) toAdd.add(m.username.toLowerCase());
+    });
+
+    const updatedDeleted = Array.from(new Set([...deleted, ...Array.from(toAdd)])).filter(
+      (id) => !/^sap-emp-\d+$/i.test(id)
+    );
+
+    saveSystemMeta({
+      ...meta,
+      deletedUserIds: updatedDeleted,
+    });
+
+    return res.json({ success: true, message: 'User permanently deleted and tombstoned.' });
+  }
 
   if (!target) {
     return res.status(404).json({ success: false, error: 'User not found.' });
@@ -853,22 +926,6 @@ app.post('/api/auth/approve', (req: Request, res: Response) => {
   } else if (action === 'disable') {
     target.accountStatus = 'disabled';
     target.active = false;
-  } else if (action === 'delete') {
-    const filtered = users.filter((u) => u.uid !== staffId && u.employeeId !== staffId);
-    saveStoredUsers(filtered);
-    const meta = loadSystemMeta();
-    const deleted = meta.deletedUserIds || [];
-    const toAdd = [
-      target.uid,
-      target.employeeId,
-      target.email?.toLowerCase(),
-      target.username?.toLowerCase(),
-    ].filter(Boolean) as string[];
-    saveSystemMeta({
-      ...meta,
-      deletedUserIds: Array.from(new Set([...deleted, ...toAdd])),
-    });
-    return res.json({ success: true, message: 'User deleted.' });
   }
 
   target.updatedAt = new Date().toISOString();
@@ -1011,11 +1068,28 @@ app.get('/api/pos/all-data', (req: Request, res: Response) => {
   const meta = loadSystemMeta();
   const wipeTs = Number(meta.lastWipeTimestamp || 0);
   const catalogWipeTs = Number(meta.lastCatalogWipeTimestamp || wipeTs);
+  const deletedIds = (meta.deletedUserIds || []).map((id: string) => id.toLowerCase());
 
   const rawUsers = loadStoredUsers();
-  const validUsers = wipeTs > 0
-    ? rawUsers.filter((u) => (u.createdAt ? new Date(u.createdAt).getTime() : 0) > wipeTs)
-    : rawUsers;
+  const validUsers = rawUsers.filter((u) => {
+    const uid = (u.uid || '').toLowerCase();
+    const email = (u.email || '').toLowerCase();
+    const username = (u.username || '').toLowerCase();
+
+    const isTombstoned =
+      (uid && deletedIds.includes(uid)) ||
+      (email && deletedIds.includes(email)) ||
+      (username && deletedIds.includes(username));
+
+    if (isTombstoned) {
+      return false;
+    }
+
+    if (wipeTs > 0) {
+      return (u.createdAt ? new Date(u.createdAt).getTime() : 0) > wipeTs;
+    }
+    return true;
+  });
   const users = validUsers.map(({ passwordHash: _, ...safe }) => safe);
 
   const rawProducts = loadStoredProducts();
@@ -1068,12 +1142,26 @@ app.get('/api/pos/all-data', (req: Request, res: Response) => {
 
 // Synchronize state across devices
 app.post('/api/pos/sync', (req: Request, res: Response) => {
-  const meta = loadSystemMeta();
+  let meta = loadSystemMeta();
   const wipeTs = Number(meta.lastWipeTimestamp || 0);
   const catalogWipeTs = Number(meta.lastCatalogWipeTimestamp || wipeTs);
-  const deletedIds = (meta.deletedUserIds || []).map((id) => id.toLowerCase());
 
-  const { users: incomingUsers, products, sales, customers, expenses, creditTxs, auditLogs, settings } = req.body || {};
+  const { users: incomingUsers, deletedUserIds: incomingDeleted, products, sales, customers, expenses, creditTxs, auditLogs, settings } = req.body || {};
+
+  if (Array.isArray(incomingDeleted) && incomingDeleted.length > 0) {
+    const cur = (meta.deletedUserIds || []).map((x: string) => x.toLowerCase());
+    const incClean = incomingDeleted.map((x: string) => String(x).trim().toLowerCase()).filter((x) => Boolean(x) && !/^sap-emp-\d+$/i.test(x));
+    const mergedDeleted = Array.from(new Set([...cur, ...incClean]));
+    if (mergedDeleted.length !== cur.length) {
+      meta = {
+        ...meta,
+        deletedUserIds: mergedDeleted,
+      };
+      saveSystemMeta(meta);
+    }
+  }
+
+  const deletedIds = (meta.deletedUserIds || []).map((id) => id.toLowerCase());
 
   if (Array.isArray(incomingUsers)) {
     // Filter incoming and existing users
@@ -1087,8 +1175,6 @@ app.post('/api/pos/sync', (req: Request, res: Response) => {
         (username && deletedIds.includes(username));
 
       if (isTombstoned) {
-        const t = inc.createdAt ? new Date(inc.createdAt).getTime() : inc.updatedAt ? new Date(inc.updatedAt).getTime() : 0;
-        if (wipeTs > 0 && t > wipeTs) return true;
         return false;
       }
       return true;
@@ -1104,8 +1190,6 @@ app.post('/api/pos/sync', (req: Request, res: Response) => {
         (username && deletedIds.includes(username));
 
       if (isTombstoned) {
-        const t = u.createdAt ? new Date(u.createdAt).getTime() : u.updatedAt ? new Date(u.updatedAt).getTime() : 0;
-        if (wipeTs > 0 && t > wipeTs) return true;
         return false;
       }
       return true;

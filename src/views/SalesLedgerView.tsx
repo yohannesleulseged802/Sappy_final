@@ -19,6 +19,7 @@ import {sound} from '../services/sound';
 import {BarcodeRenderer} from '../components/common/BarcodeRenderer';
 import {PinModal} from '../components/common/PinModal';
 import {A4InvoiceModal} from '../components/pos/A4InvoiceModal';
+import {toast} from '../services/toast';
 
 interface SalesLedgerViewProps {
   sales: Sale[];
@@ -52,9 +53,10 @@ export const SalesLedgerView: React.FC<SalesLedgerViewProps> = ({
       setIsExportingPdf(true);
       await ExportService.generateA4InvoicePDF(sale, settings, { format });
       sound.playCheckoutSuccess();
+      toast.success(`Invoice ${sale.receiptNumber} exported successfully!`);
     } catch (err) {
       console.error('Failed to export PDF:', err);
-      alert('Failed to generate invoice PDF. Please try again.');
+      toast.error('Failed to generate invoice PDF. Please try again.');
     } finally {
       setIsExportingPdf(false);
     }
@@ -99,10 +101,10 @@ export const SalesLedgerView: React.FC<SalesLedgerViewProps> = ({
     if (!saleToRefund) return;
     const res = storage.refundSale(saleToRefund.id, refundReason, pinStaff.pin);
     if (!res.success) {
-      alert(res.error || 'Failed to refund sale.');
+      toast.error(res.error || 'Failed to refund sale.');
       return;
     }
-    alert(`Sale #${saleToRefund.receiptNumber} successfully refunded and inventory restored.`);
+    toast.success(`Sale #${saleToRefund.receiptNumber} successfully refunded and inventory restored.`);
     setIsRefundModalOpen(false);
     setSaleToRefund(null);
     onRefreshData();

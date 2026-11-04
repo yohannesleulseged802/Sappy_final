@@ -9,6 +9,7 @@ import { Sale, StoreSettings } from '../../types';
 import { ExportService } from '../../services/export';
 import { sound } from '../../services/sound';
 import { InvoiceTemplate } from './InvoiceTemplate';
+import { toast } from '../../services/toast';
 
 interface A4InvoiceModalProps {
   sale: Sale | null;
@@ -40,9 +41,10 @@ export const A4InvoiceModal: React.FC<A4InvoiceModalProps> = ({
       setIsExporting(true);
       await ExportService.generateA4InvoicePDF(sale, settings, { format: docFormat });
       sound.playCheckoutSuccess();
+      toast.success(`Invoice ${sale.receiptNumber} exported as ${docFormat.toUpperCase()} PDF!`);
     } catch (err) {
       console.error('Failed to export PDF:', err);
-      alert('Failed to generate PDF. Please try again.');
+      toast.error('Failed to generate PDF. Please try again.');
     } finally {
       setIsExporting(false);
     }

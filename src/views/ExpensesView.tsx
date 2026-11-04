@@ -3,6 +3,7 @@ import {DollarSign, Plus, Search, Filter, Calendar, X, Download} from 'lucide-re
 import {StoreExpense, StoreSettings, Staff} from '../types';
 import {storage} from '../services/storage';
 import {ExportService} from '../services/export';
+import {toast} from '../services/toast';
 
 interface ExpensesViewProps {
   settings: StoreSettings;
@@ -46,7 +47,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
   const handleSaveExpense = (e: React.FormEvent) => {
     e.preventDefault();
     if (expAmount <= 0 || !expDescription.trim()) {
-      alert('Description and amount are required.');
+      toast.error('Description and amount are required.');
       return;
     }
 
@@ -63,6 +64,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
     setExpDescription('');
     setExpAmount(0);
     setExpReceiptRef('');
+    toast.success('Store expense logged successfully!');
     onRefreshData();
   };
 

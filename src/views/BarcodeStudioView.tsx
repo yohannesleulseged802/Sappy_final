@@ -28,6 +28,7 @@ import {ItemSelectorModal, SelectedItemConfig} from '../components/common/ItemSe
 import {IndividualCodeViewModal} from '../components/common/IndividualCodeViewModal';
 import {storage} from '../services/storage';
 import {ExportService} from '../services/export';
+import {toast} from '../services/toast';
 
 interface BarcodeStudioViewProps {
   products: Product[];
@@ -161,8 +162,9 @@ export const BarcodeStudioView: React.FC<BarcodeStudioViewProps> = ({
         showBorder: true,
         barcodeFormat: 'CODE128',
       });
+      toast.success('Barcode label sheet exported successfully!');
     } catch (err: any) {
-      alert(err?.message || 'Failed to export PDF.');
+      toast.error(err?.message || 'Failed to export PDF.');
     } finally {
       setIsExportingPDF(false);
     }

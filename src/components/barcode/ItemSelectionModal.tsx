@@ -19,6 +19,7 @@ import {
 import {Product, StoreSettings} from '../../types';
 import {storage} from '../../services/storage';
 import {sound} from '../../services/sound';
+import {toast} from '../../services/toast';
 
 export interface ConfirmedSelectedItem {
   product: Product;
@@ -246,7 +247,7 @@ export const ItemSelectionModal: React.FC<ItemSelectionModalProps> = ({
     });
 
     if (confirmed.length === 0) {
-      alert('Please select at least one product.');
+      toast.warning('Please select at least one product.');
       return;
     }
 

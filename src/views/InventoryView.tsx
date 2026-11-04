@@ -37,6 +37,7 @@ import {BarcodeRenderer} from '../components/common/BarcodeRenderer';
 import {CameraScannerModal} from '../components/common/CameraScannerModal';
 import {ItemSelectorModal, SelectedItemConfig} from '../components/common/ItemSelectorModal';
 import {IndividualCodeViewModal} from '../components/common/IndividualCodeViewModal';
+import {toast} from '../services/toast';
 
 interface InventoryViewProps {
   products: Product[];
@@ -252,7 +253,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     const clean = codeValue.trim();
     const conflict = storage.findCodeConflict(clean, editingProduct?.id);
     if (conflict) {
-      alert(`Cannot assign code: already owned by "${conflict.conflictingProduct.name}".`);
+      toast.error(`Cannot assign code: already owned by "${conflict.conflictingProduct.name}".`);
       return;
     }
 
@@ -277,7 +278,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const handleSaveProduct = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formName.trim() || !formSku.trim()) {
-      alert('Product Name and SKU are required.');
+      toast.error('Product Name and SKU are required.');
       return;
     }
 
@@ -313,11 +314,12 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         });
         return;
       }
-      alert(result.error || 'Failed to save product.');
+      toast.error(result.error || 'Failed to save product.');
       return;
     }
 
     sound.playCheckoutSuccess();
+    toast.success(isNew ? 'Product added to inventory!' : 'Product updated successfully!');
     setIsProductModalOpen(false);
     onRefreshData();
   };
@@ -329,7 +331,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       updatePrice: true,
     });
     sound.playCheckoutSuccess();
-    alert(`Successfully merged duplicate item! Stock combined to ${duplicateConflict.existingProduct.currentStock + duplicateConflict.incomingProduct.currentStock} ${duplicateConflict.existingProduct.unit}.`);
+    toast.success(`Successfully merged duplicate item! Stock combined to ${duplicateConflict.existingProduct.currentStock + duplicateConflict.incomingProduct.currentStock} ${duplicateConflict.existingProduct.unit}.`);
     setDuplicateConflict(null);
     setIsProductModalOpen(false);
     onRefreshData();
@@ -339,7 +341,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     if (!duplicateConflict) return;
     storage.saveProduct(duplicateConflict.incomingProduct, false, 'replace');
     sound.playCheckoutSuccess();
-    alert(`Existing catalog item was replaced with incoming product details.`);
+    toast.success(`Existing catalog item was replaced with incoming product details.`);
     setDuplicateConflict(null);
     setIsProductModalOpen(false);
     onRefreshData();
@@ -395,7 +397,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       }
     } catch (err: any) {
       sound.playError();
-      alert(err?.message || 'Failed to read spreadsheet file. Please verify it is a valid .xlsx or .csv document.');
+      toast.error(err?.message || 'Failed to read spreadsheet file. Please verify it is a valid .xlsx or .csv document.');
     } finally {
       setIsParsingImport(false);
       e.target.value = '';
@@ -476,7 +478,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     if (mergedCount > 0) parts.push(`${mergedCount} duplicates merged & stock combined`);
     if (skippedCount > 0) parts.push(`${skippedCount} duplicates skipped`);
 
-    alert(`Spreadsheet import complete: ${parts.join(', ') || 'Catalog updated'}! Synced across all devices.`);
+    toast.success(`Spreadsheet import complete: ${parts.join(', ') || 'Catalog updated'}! Synced across all devices.`);
     setIsImportModalOpen(false);
     setImportPreviewRows([]);
     setImportErrors([]);
@@ -543,7 +545,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     if (onNavigateToBarcodeStudio) {
       onNavigateToBarcodeStudio(labelItems);
     } else {
-      alert(`Selected ${labelItems.length} products for Barcode & QR Code generation!`);
+      toast.info(`Selected ${labelItems.length} products for Barcode & QR Code generation!`);
     }
   };
 
@@ -576,8 +578,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         showProductName: true,
         showBorder: true,
       });
+      toast.success(`Exported ${itemsToExport.length} product labels as A4 sheet!`);
     } catch (err: any) {
-      alert(err?.message || 'Failed to export PDF');
+      toast.error(err?.message || 'Failed to export PDF');
     } finally {
       setIsBatchExportingPDF(false);
     }

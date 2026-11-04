@@ -25,6 +25,7 @@ import { Staff, StaffRole } from '../types';
 import { storage } from '../services/storage';
 import { sound } from '../services/sound';
 import { authService } from '../services/authService';
+import { toast } from '../services/toast';
 import { MasterPasscodeSignupModal } from '../components/common/MasterPasscodeSignupModal';
 
 interface StaffViewProps {
@@ -66,6 +67,10 @@ export const StaffView: React.FC<StaffViewProps> = ({
   const [pin, setPin] = useState('');
   const [jobTitle, setJobTitle] = useState('POS Cashier');
 
+  // Single Staff Account Deletion Modal State
+  const [staffToDelete, setStaffToDelete] = useState<Staff | null>(null);
+  const [isDeletingStaff, setIsDeletingStaff] = useState(false);
+
   const isAdmin = currentStaff.role === 'admin';
   const pendingStaff = staffList.filter((s) => s.approvalStatus === 'pending');
 
@@ -94,7 +99,7 @@ export const StaffView: React.FC<StaffViewProps> = ({
   const handleSaveStaff = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || pin.length !== 4) {
-      alert('Name and a 4-digit PIN are required.');
+      toast.error('Name and a 4-digit PIN are required.');
       return;
     }
 
@@ -118,7 +123,7 @@ export const StaffView: React.FC<StaffViewProps> = ({
       const cleanEmail = (email.trim() || `${name.toLowerCase().replace(/\s+/g, '')}@sappystationary.com`).toLowerCase();
       const existingMatch = staffList.find((s) => s.email && s.email.toLowerCase() === cleanEmail);
       if (existingMatch) {
-        alert(`An account with email "${cleanEmail}" already exists (${existingMatch.name}).`);
+        toast.error(`An account with email "${cleanEmail}" already exists (${existingMatch.name}).`);
         return;
       }
 
@@ -164,32 +169,44 @@ export const StaffView: React.FC<StaffViewProps> = ({
 
     setIsAddModalOpen(false);
     sound.playCheckoutSuccess();
+    toast.success(editingStaff ? 'Staff account updated successfully!' : 'Staff account created successfully!');
     onRefreshData();
   };
 
   const handleApproveStaff = (staffId: string) => {
     storage.approveStaff(staffId, currentStaff.name);
     sound.playCheckoutSuccess();
+    toast.success('Staff account approved.');
     onRefreshData();
   };
 
   const handleRejectStaff = (staffId: string) => {
-    if (confirm('Are you sure you want to reject this staff account?')) {
-      storage.rejectStaff(staffId, currentStaff.name);
-      sound.playError();
-      onRefreshData();
-    }
+    storage.rejectStaff(staffId, currentStaff.name);
+    sound.playError();
+    toast.info('Staff account rejected.');
+    onRefreshData();
   };
 
-  const handleDeleteStaff = (staffId: string, staffName: string) => {
-    if (staffId === currentStaff.id) {
-      alert('You cannot delete your own currently active session account.');
+  const handleDeleteStaff = (staff: Staff) => {
+    if (staff.id === currentStaff.id) {
+      toast.warning('Cannot delete the active logged-in account. Switch to another account first.');
       return;
     }
-    if (confirm(`Are you sure you want to remove staff account "${staffName}"? This action is logged in audit trails.`)) {
-      storage.deleteStaff(staffId);
+    setStaffToDelete(staff);
+  };
+
+  const confirmDeleteStaff = async () => {
+    if (!staffToDelete) return;
+    setIsDeletingStaff(true);
+    try {
+      await storage.deleteStaff(staffToDelete.id);
       sound.playCheckoutSuccess();
+      setStaffToDelete(null);
       onRefreshData();
+    } catch (err) {
+      console.error('Failed to delete staff account:', err);
+    } finally {
+      setIsDeletingStaff(false);
     }
   };
 
@@ -464,10 +481,10 @@ export const StaffView: React.FC<StaffViewProps> = ({
                   {isAdmin && !isCurrent && (
                     <button
                       type="button"
-                      onClick={() => handleDeleteStaff(s.id, s.name)}
-                      className="text-stone-400 hover:text-rose-600 transition p-2 min-h-[44px] min-w-[44px] flex items-center justify-center cursor-pointer touch-manipulation"
-                      title="Remove staff account"
-                      aria-label="Remove staff account"
+                      onClick={() => handleDeleteStaff(s)}
+                      className="text-stone-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl transition p-2 min-h-[44px] min-w-[44px] flex items-center justify-center cursor-pointer touch-manipulation"
+                      title={`Remove staff account "${s.name}"`}
+                      aria-label={`Remove staff account "${s.name}"`}
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -706,6 +723,92 @@ export const StaffView: React.FC<StaffViewProps> = ({
                   <>
                     <Trash2 className="w-3.5 h-3.5" />
                     <span>Remove All Accounts</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: CONFIRM DELETE SINGLE STAFF ================= */}
+      {staffToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="w-full max-w-sm bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-3xl p-5 shadow-2xl space-y-4 animate-in fade-in zoom-in-95">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-rose-100 dark:bg-rose-950/80 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-black text-sm text-stone-900 dark:text-stone-100">
+                  Delete Staff Account
+                </h3>
+                <p className="text-[11px] text-stone-500">
+                  Permanently remove account &amp; credentials
+                </p>
+              </div>
+            </div>
+
+            {/* Target Account Summary Card */}
+            <div className="p-3 bg-stone-50 dark:bg-stone-800/60 rounded-2xl border border-stone-200/60 dark:border-stone-800 flex items-center gap-3">
+              {staffToDelete.avatar ? (
+                <img
+                  src={staffToDelete.avatar}
+                  alt={staffToDelete.name}
+                  className="w-10 h-10 rounded-xl object-cover border border-stone-200 dark:border-stone-700 shrink-0"
+                />
+              ) : (
+                <div className="w-10 h-10 rounded-xl bg-[#064e3b] text-[#6ee7b7] flex items-center justify-center font-bold text-sm shrink-0">
+                  {staffToDelete.name.charAt(0)}
+                </div>
+              )}
+              <div className="overflow-hidden flex-1">
+                <div className="flex items-center justify-between gap-1">
+                  <h4 className="font-bold text-xs text-stone-900 dark:text-stone-100 truncate">
+                    {staffToDelete.name}
+                  </h4>
+                  <span className="text-[9px] px-1.5 py-0.2 rounded font-bold uppercase bg-stone-200 dark:bg-stone-700 text-stone-800 dark:text-stone-200">
+                    {staffToDelete.role}
+                  </span>
+                </div>
+                <p className="text-[10px] text-stone-500 font-mono truncate">{staffToDelete.email}</p>
+                {staffToDelete.employeeId && (
+                  <p className="text-[10px] text-[#064e3b] dark:text-[#6ee7b7] font-mono font-semibold">
+                    ID: {staffToDelete.employeeId}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <p className="text-xs text-stone-600 dark:text-stone-400 leading-relaxed">
+              Are you sure you want to remove <strong className="text-stone-800 dark:text-stone-200">"{staffToDelete.name}"</strong>? This will revoke terminal access and delete the record across all devices.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-stone-100 dark:border-stone-800">
+              <button
+                type="button"
+                disabled={isDeletingStaff}
+                onClick={() => setStaffToDelete(null)}
+                className="px-4 py-2 rounded-xl border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-700 dark:text-stone-300 text-xs font-bold transition cursor-pointer"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                disabled={isDeletingStaff}
+                onClick={confirmDeleteStaff}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow-xs"
+              >
+                {isDeletingStaff ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Account</span>
                   </>
                 )}
               </button>
