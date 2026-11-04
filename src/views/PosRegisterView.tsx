@@ -27,6 +27,7 @@ import {
   HelpCircle,
   Printer,
   FileDown,
+  Calculator,
 } from 'lucide-react';
 import {
   Product,
@@ -46,6 +47,7 @@ import {toast} from '../services/toast';
 import {CameraScannerModal} from '../components/common/CameraScannerModal';
 import {BarcodeRenderer} from '../components/common/BarcodeRenderer';
 import {IndividualCodeViewModal} from '../components/common/IndividualCodeViewModal';
+import {EndOfDayReportModal} from '../components/pos/EndOfDayReportModal';
 
 interface PosRegisterViewProps {
   products: Product[];
@@ -81,6 +83,7 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
   const [isDiscountModalOpen, setIsDiscountModalOpen] = useState(false);
   const [isHeldOrdersModalOpen, setIsHeldOrdersModalOpen] = useState(false);
   const [isCompletedModalOpen, setIsCompletedModalOpen] = useState(false);
+  const [isEndOfDayOpen, setIsEndOfDayOpen] = useState(false);
   const [lastCompletedSale, setLastCompletedSale] = useState<Sale | null>(null);
   const [justRecordedNotice, setJustRecordedNotice] = useState<{
     receiptNumber: string;
@@ -626,6 +629,17 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
               <span>{heldOrders.length} Held</span>
             </button>
           )}
+
+          {/* End of Day / Shift Drawer Reconciliation Button */}
+          <button
+            onClick={() => setIsEndOfDayOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-2 bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 text-stone-800 dark:text-stone-200 border border-stone-300 dark:border-stone-700 rounded-xl text-xs font-bold shadow-2xs transition shrink-0 cursor-pointer"
+            title="End of Day Report & Shift Cash Drawer Reconciliation (Z-Report)"
+          >
+            <Calculator className="w-4 h-4 text-[#064e3b] dark:text-emerald-400" />
+            <span className="hidden sm:inline">End of Day</span>
+            <span className="sm:hidden">EOD</span>
+          </button>
         </div>
 
         {/* Category Filter Horizontal Chips */}
@@ -1702,6 +1716,15 @@ export const PosRegisterView: React.FC<PosRegisterViewProps> = ({
         onClose={() => setIsIndividualCodeOpen(false)}
         product={inspectCodeProduct}
         settings={settings}
+        onRefreshData={onRefreshData}
+      />
+
+      {/* ================= END OF DAY & CASH DRAWER RECONCILIATION MODAL ================= */}
+      <EndOfDayReportModal
+        isOpen={isEndOfDayOpen}
+        onClose={() => setIsEndOfDayOpen(false)}
+        settings={settings}
+        currentStaff={currentStaff}
         onRefreshData={onRefreshData}
       />
     </div>

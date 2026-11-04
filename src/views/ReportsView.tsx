@@ -9,10 +9,12 @@ import {
   Package,
   Users,
   Award,
+  Calculator,
 } from 'lucide-react';
 import {Sale, Product, StoreSettings, Staff, StoreExpense} from '../types';
 import {storage} from '../services/storage';
 import {ExportService} from '../services/export';
+import {EndOfDayReportModal} from '../components/pos/EndOfDayReportModal';
 import {jsPDF} from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -30,6 +32,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   currentStaff,
 }) => {
   const [timeRange, setTimeRange] = useState<'today' | 'week' | 'month' | 'all'>('week');
+  const [isEndOfDayOpen, setIsEndOfDayOpen] = useState(false);
   const expenses = storage.getExpenses();
   const customers = storage.getCustomers();
 
@@ -189,6 +192,15 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           </div>
 
           <button
+            onClick={() => setIsEndOfDayOpen(true)}
+            className="px-3.5 py-2 min-h-[44px] sm:min-h-0 bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 text-stone-900 dark:text-stone-100 border border-stone-300 dark:border-stone-700 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-2xs touch-manipulation cursor-pointer"
+            title="Open End of Day Cash Drawer Reconciliation Modal"
+          >
+            <Calculator className="w-4 h-4 text-[#064e3b] dark:text-emerald-400" />
+            <span>End of Day (Z-Report)</span>
+          </button>
+
+          <button
             onClick={handleDownloadPDFReport}
             className="px-3.5 py-2 min-h-[44px] sm:min-h-0 bg-[#064e3b] hover:bg-[#043b2c] text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm touch-manipulation cursor-pointer"
           >
@@ -313,6 +325,14 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* ================= END OF DAY REPORT & RECONCILIATION MODAL ================= */}
+      <EndOfDayReportModal
+        isOpen={isEndOfDayOpen}
+        onClose={() => setIsEndOfDayOpen(false)}
+        settings={settings}
+        currentStaff={currentStaff}
+      />
     </div>
   );
 };

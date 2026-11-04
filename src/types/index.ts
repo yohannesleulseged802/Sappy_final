@@ -283,3 +283,51 @@ export interface SyncQueueItem {
   timestamp: string;
   retries: number;
 }
+
+export interface EndOfDayReport {
+  date: string; // YYYY-MM-DD
+  generatedAt: string;
+  cashierName: string;
+  shiftId?: string;
+  shiftNumber?: number;
+  openingFloat: number;
+
+  // Sales aggregates
+  completedSalesCount: number;
+  refundedSalesCount: number;
+  itemsSoldCount: number;
+  grossSales: number;
+  totalDiscount: number;
+  netSales: number;
+  taxAmount: number;
+  grandTotalSales: number;
+
+  // Tender / Payment Breakdown
+  cashSales: number;
+  cardSales: number;
+  mobileSales: number;
+  creditSales: number;
+
+  // Expense Payouts
+  totalExpenses: number;
+  cashDrawerExpenses: number;
+  digitalExpenses: number;
+  expenses: StoreExpense[];
+
+  // Customer Credit Activities
+  newCreditIssued: number;
+  creditRepaymentsTotal: number;
+  creditRepaymentsCash: number;
+  creditRepaymentsDigital: number;
+  creditTransactions: CreditTransaction[];
+
+  // Cash Drawer Reconciliation Math
+  cashAdditions: number;
+  cashDrops: number;
+  refundsCash: number;
+  expectedCash: number;
+  actualCash?: number;
+  variance?: number; // actual - expected
+  varianceReason?: string;
+  notes?: string;
+}

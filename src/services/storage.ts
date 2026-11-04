@@ -12,6 +12,7 @@ import {
   SyncQueueItem,
   StockMovement,
   CreditTransaction,
+  EndOfDayReport,
 } from '../types';
 import { db, auth } from './firebaseAuth';
 import {
@@ -2605,6 +2606,213 @@ class StorageService {
 
     this.saveShifts(shifts);
     this.addAuditLog(type === 'drop' ? 'CASH_DROP' : 'FLOAT_ADDITION', 'SHIFT', `Cash ${type} of ${amount} ETB in shift #${shift.shiftNumber}: ${note}`);
+  }
+
+  // --- End of Day Aggregation & Drawer Reconciliation ---
+  getEndOfDayReport(dateStr?: string, shiftId?: string): EndOfDayReport {
+    const targetDate = dateStr || new Date().toISOString().slice(0, 10);
+    const shifts = this.getShifts();
+    const activeShift = shiftId ? shifts.find((s) => s.id === shiftId) : this.getActiveShift();
+
+    // 1. Sales for the day (or specific shift)
+    const allSales = this.getSales();
+    const daySales = allSales.filter((s) => {
+      const sDate = s.date.slice(0, 10);
+      if (shiftId && s.shiftId) {
+        return s.shiftId === shiftId;
+      }
+      return sDate === targetDate;
+    });
+
+    const completedSales = daySales.filter((s) => s.status === 'COMPLETED');
+    const refundedSales = daySales.filter((s) => s.status === 'REFUNDED' || s.status === 'PARTIALLY_REFUNDED');
+
+    let grossSales = 0;
+    let totalDiscount = 0;
+    let taxAmount = 0;
+    let grandTotalSales = 0;
+    let itemsSoldCount = 0;
+
+    let cashSales = 0;
+    let cardSales = 0;
+    let mobileSales = 0;
+    let creditSales = 0;
+
+    completedSales.forEach((s) => {
+      grossSales += s.subtotal;
+      totalDiscount += s.totalDiscount || 0;
+      taxAmount += s.taxAmount || 0;
+      grandTotalSales += s.grandTotal;
+      s.items.forEach((i) => {
+        itemsSoldCount += i.quantity;
+      });
+
+      s.payments.forEach((p) => {
+        if (p.method === 'cash') cashSales += p.amount;
+        else if (p.method === 'card') cardSales += p.amount;
+        else if (p.method === 'mobile_transfer') mobileSales += p.amount;
+        else if (p.method === 'credit') creditSales += p.amount;
+      });
+    });
+
+    // Refunds cash payout
+    let refundsCash = 0;
+    refundedSales.forEach((s) => {
+      const cashPay = s.payments.find((p) => p.method === 'cash');
+      if (cashPay) refundsCash += cashPay.amount;
+    });
+
+    // 2. Expenses for the day
+    const allExpenses = this.getExpenses();
+    const dayExpenses = allExpenses.filter((e) => {
+      if (shiftId && e.shiftId) return e.shiftId === shiftId;
+      return e.date.slice(0, 10) === targetDate;
+    });
+
+    let totalExpenses = 0;
+    let cashDrawerExpenses = 0;
+    let digitalExpenses = 0;
+
+    dayExpenses.forEach((e) => {
+      totalExpenses += e.amount;
+      if (e.paidWith === 'cash_drawer' || e.paidWith === 'petty_cash') {
+        cashDrawerExpenses += e.amount;
+      } else {
+        digitalExpenses += e.amount;
+      }
+    });
+
+    // 3. Credit transactions for the day
+    const allCreditTxs = this.getCreditTransactions();
+    const dayCreditTxs = allCreditTxs.filter((tx) => tx.date.slice(0, 10) === targetDate);
+
+    let newCreditIssued = 0;
+    let creditRepaymentsTotal = 0;
+    let creditRepaymentsCash = 0;
+    let creditRepaymentsDigital = 0;
+
+    dayCreditTxs.forEach((tx) => {
+      if (tx.type === 'CHARGE') {
+        newCreditIssued += tx.amount;
+      } else if (tx.type === 'PAYMENT') {
+        creditRepaymentsTotal += tx.amount;
+        if (tx.paymentMethod === 'cash') {
+          creditRepaymentsCash += tx.amount;
+        } else {
+          creditRepaymentsDigital += tx.amount;
+        }
+      }
+    });
+
+    // 4. Shift & Drawer Cash Reconciliation
+    const openingFloat = activeShift ? activeShift.openingFloat : 0;
+    const cashAdditions = activeShift ? activeShift.cashAdditions : 0;
+    const cashDrops = activeShift ? activeShift.cashDrops : 0;
+
+    const expectedCash =
+      openingFloat +
+      cashSales +
+      creditRepaymentsCash +
+      cashAdditions -
+      cashDrawerExpenses -
+      refundsCash -
+      cashDrops;
+
+    return {
+      date: targetDate,
+      generatedAt: new Date().toISOString(),
+      cashierName: activeShift?.cashierName || this.getCurrentStaff().name,
+      shiftId: activeShift?.id,
+      shiftNumber: activeShift?.shiftNumber,
+      openingFloat,
+      completedSalesCount: completedSales.length,
+      refundedSalesCount: refundedSales.length,
+      itemsSoldCount,
+      grossSales,
+      totalDiscount,
+      netSales: Math.max(0, grossSales - totalDiscount),
+      taxAmount,
+      grandTotalSales,
+      cashSales,
+      cardSales,
+      mobileSales,
+      creditSales,
+      totalExpenses,
+      cashDrawerExpenses,
+      digitalExpenses,
+      expenses: dayExpenses,
+      newCreditIssued,
+      creditRepaymentsTotal,
+      creditRepaymentsCash,
+      creditRepaymentsDigital,
+      creditTransactions: dayCreditTxs,
+      cashAdditions,
+      cashDrops,
+      refundsCash,
+      expectedCash,
+      actualCash: activeShift?.actualCash,
+      variance: activeShift?.variance,
+      varianceReason: activeShift?.varianceReason,
+      notes: activeShift?.notes,
+    };
+  }
+
+  saveEndOfDayReconciliation(
+    dateStr: string,
+    actualCash: number,
+    varianceReason?: string,
+    notes?: string
+  ): EndOfDayReport {
+    const report = this.getEndOfDayReport(dateStr);
+    const variance = actualCash - report.expectedCash;
+    report.actualCash = actualCash;
+    report.variance = variance;
+    report.varianceReason = varianceReason;
+    report.notes = notes;
+
+    // If an active shift is open, close it
+    const activeShift = this.getActiveShift();
+    if (activeShift) {
+      this.closeShift(activeShift.id, actualCash, varianceReason);
+    } else {
+      // Create a closed record shift for this day's reconciliation
+      const staff = this.getCurrentStaff();
+      const shifts = this.getShifts();
+      const newShiftNum = (shifts[0]?.shiftNumber || 100) + 1;
+      const closedShift: Shift = {
+        id: `shift-eod-${Date.now()}`,
+        shiftNumber: newShiftNum,
+        cashierId: staff.id,
+        cashierName: staff.name,
+        openedAt: `${dateStr}T08:00:00.000Z`,
+        closedAt: new Date().toISOString(),
+        openingFloat: report.openingFloat,
+        cashSales: report.cashSales,
+        cardSales: report.cardSales,
+        mobileSales: report.mobileSales,
+        creditSales: report.creditSales,
+        cashAdditions: report.cashAdditions,
+        cashDrops: report.cashDrops,
+        expenses: report.cashDrawerExpenses,
+        refundsGiven: report.refundsCash,
+        expectedCash: report.expectedCash,
+        actualCash,
+        variance,
+        varianceReason,
+        status: 'CLOSED',
+        notes: notes || 'End of Day Reconciliation',
+      };
+      this.saveShifts([closedShift, ...shifts]);
+    }
+
+    const varTxt = variance === 0 ? 'Cash matched expected amount' : variance > 0 ? `Overage: +${variance} ETB` : `Shortage: ${variance} ETB`;
+    this.addAuditLog(
+      'END_OF_DAY_RECONCILED',
+      'SHIFT',
+      `End of Day reconciliation completed for ${dateStr} by ${this.getCurrentStaff().name}. Actual: ${actualCash} ETB, Expected: ${report.expectedCash} ETB. ${varTxt}`
+    );
+
+    return report;
   }
 
   // --- Sales & Transactions ---
