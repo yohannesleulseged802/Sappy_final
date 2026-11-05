@@ -93,6 +93,7 @@ export default function App() {
 
   // Inactivity Timer Ref (Requirement #37 Session Security)
   const inactivityTimerRef = useRef<any>(null);
+  const [dataVersion, setDataVersion] = useState(0);
 
   // Sync state from storage
   const refreshAllData = useCallback(() => {
@@ -104,6 +105,7 @@ export default function App() {
     setHeldOrdersCount(storage.getHeldOrders().length);
     setIsAuthenticated(storage.isAuthenticated());
     setIsLocked(storage.isRegisterLocked());
+    setDataVersion((v) => v + 1);
   }, []);
 
   // Update theme class on root html/body
@@ -400,6 +402,7 @@ export default function App() {
 
           {currentSection === 'sales' && (
             <SalesLedgerView
+              key={`sales-${dataVersion}`}
               sales={sales}
               settings={settings}
               currentStaff={currentStaff}
@@ -409,6 +412,7 @@ export default function App() {
 
           {currentSection === 'credit' && (
             <CreditAccountsView
+              key={`credit-${dataVersion}`}
               settings={settings}
               currentStaff={currentStaff}
               onRefreshData={refreshAllData}
@@ -417,6 +421,7 @@ export default function App() {
 
           {currentSection === 'expenses' && (
             <ExpensesView
+              key={`expenses-${dataVersion}`}
               settings={settings}
               currentStaff={currentStaff}
               onRefreshData={refreshAllData}

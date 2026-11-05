@@ -1104,17 +1104,17 @@ app.get('/api/pos/all-data', (req: Request, res: Response) => {
 
   const rawCustomers = loadStoredCustomers();
   const customers = catalogWipeTs > 0
-    ? rawCustomers.filter((c: any) => (c.createdAt ? new Date(c.createdAt).getTime() : 0) > catalogWipeTs)
+    ? rawCustomers.filter((c: any) => (c.createdDate ? new Date(c.createdDate).getTime() : (c.createdAt ? new Date(c.createdAt).getTime() : 0)) > catalogWipeTs)
     : rawCustomers;
 
   const rawExpenses = loadStoredExpenses();
   const expenses = catalogWipeTs > 0
-    ? rawExpenses.filter((e: any) => (e.timestamp ? new Date(e.timestamp).getTime() : 0) > catalogWipeTs)
+    ? rawExpenses.filter((e: any) => (e.date ? new Date(e.date).getTime() : (e.timestamp ? new Date(e.timestamp).getTime() : 0)) > catalogWipeTs)
     : rawExpenses;
 
   const rawCreditTxs = loadStoredCreditTxs();
   const creditTxs = catalogWipeTs > 0
-    ? rawCreditTxs.filter((t: any) => (t.timestamp ? new Date(t.timestamp).getTime() : 0) > catalogWipeTs)
+    ? rawCreditTxs.filter((t: any) => (t.date ? new Date(t.date).getTime() : (t.timestamp ? new Date(t.timestamp).getTime() : 0)) > catalogWipeTs)
     : rawCreditTxs;
 
   const auditLogs = loadStoredAuditLogs();
@@ -1163,6 +1163,7 @@ app.post('/api/pos/sync', (req: Request, res: Response) => {
 
   const deletedIds = (meta.deletedUserIds || []).map((id) => id.toLowerCase());
 
+  let mergedUsersSafe: any[] = [];
   if (Array.isArray(incomingUsers)) {
     // Filter incoming and existing users
     const validIncoming = incomingUsers.filter((inc: any) => {
@@ -1283,42 +1284,118 @@ app.post('/api/pos/sync', (req: Request, res: Response) => {
         initializedAt: meta.initializedAt || new Date().toISOString(),
       });
     }
+    mergedUsersSafe = mergedUsers.map(({ passwordHash: _, ...safe }) => safe);
+  } else {
+    mergedUsersSafe = loadStoredUsers().map(({ passwordHash: _, ...safe }) => safe);
   }
 
-  // Filter products, sales, customers, expenses, creditTxs by catalogWipeTs
+  // 1. Merge Products without overwriting
+  let finalProducts = loadStoredProducts();
   if (Array.isArray(products)) {
-    const validProds = catalogWipeTs > 0
-      ? products.filter((p: any) => Math.max(p.updatedDate ? new Date(p.updatedDate).getTime() : 0, p.createdDate ? new Date(p.createdDate).getTime() : 0) > catalogWipeTs)
-      : products;
-    saveStoredProducts(validProds);
+    const prodMap = new Map<string, any>();
+    finalProducts.forEach((p: any) => { if (p?.id) prodMap.set(p.id, p); });
+    products.forEach((inc: any) => {
+      if (!inc?.id) return;
+      const cur = prodMap.get(inc.id);
+      if (!cur) {
+        prodMap.set(inc.id, inc);
+      } else {
+        const curT = cur.updatedDate ? new Date(cur.updatedDate).getTime() : 0;
+        const incT = inc.updatedDate ? new Date(inc.updatedDate).getTime() : 0;
+        prodMap.set(inc.id, incT >= curT ? { ...cur, ...inc } : { ...inc, ...cur });
+      }
+    });
+    finalProducts = Array.from(prodMap.values());
+    if (catalogWipeTs > 0) {
+      finalProducts = finalProducts.filter((p: any) => Math.max(p.updatedDate ? new Date(p.updatedDate).getTime() : 0, p.createdDate ? new Date(p.createdDate).getTime() : 0) > catalogWipeTs);
+    }
+    saveStoredProducts(finalProducts);
   }
 
+  // 2. Merge Sales without dropping records
+  let finalSales = loadStoredSales();
   if (Array.isArray(sales)) {
-    const validSales = catalogWipeTs > 0
-      ? sales.filter((s: any) => (s.date ? new Date(s.date).getTime() : 0) > catalogWipeTs)
-      : sales;
-    saveStoredSales(validSales);
+    const salesMap = new Map<string, any>();
+    finalSales.forEach((s: any) => { if (s?.id) salesMap.set(s.id, s); });
+    sales.forEach((inc: any) => {
+      if (!inc?.id) return;
+      const cur = salesMap.get(inc.id);
+      if (!cur) {
+        salesMap.set(inc.id, inc);
+      } else {
+        if (inc.status === 'REFUNDED' || inc.refunded) {
+          salesMap.set(inc.id, { ...cur, ...inc, status: 'REFUNDED' });
+        } else {
+          salesMap.set(inc.id, { ...cur, ...inc });
+        }
+      }
+    });
+    finalSales = Array.from(salesMap.values());
+    if (catalogWipeTs > 0) {
+      finalSales = finalSales.filter((s: any) => (s.date ? new Date(s.date).getTime() : 0) > catalogWipeTs);
+    }
+    finalSales.sort((a: any, b: any) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
+    saveStoredSales(finalSales);
   }
 
+  // 3. Merge Customers cleanly
+  let finalCustomers = loadStoredCustomers();
   if (Array.isArray(customers)) {
-    const validCust = catalogWipeTs > 0
-      ? customers.filter((c: any) => (c.createdAt ? new Date(c.createdAt).getTime() : 0) > catalogWipeTs)
-      : customers;
-    saveStoredCustomers(validCust);
+    const custMap = new Map<string, any>();
+    finalCustomers.forEach((c: any) => { if (c?.id) custMap.set(c.id, c); });
+    customers.forEach((inc: any) => {
+      if (!inc?.id) return;
+      const cur = custMap.get(inc.id);
+      if (!cur) {
+        custMap.set(inc.id, inc);
+      } else {
+        custMap.set(inc.id, {
+          ...cur,
+          ...inc,
+          currentBalance: inc.currentBalance !== undefined ? inc.currentBalance : cur.currentBalance,
+          isStampedPaid: inc.isStampedPaid !== undefined ? inc.isStampedPaid : cur.isStampedPaid,
+        });
+      }
+    });
+    finalCustomers = Array.from(custMap.values());
+    if (catalogWipeTs > 0) {
+      finalCustomers = finalCustomers.filter((c: any) => (c.createdDate ? new Date(c.createdDate).getTime() : (c.createdAt ? new Date(c.createdAt).getTime() : 0)) > catalogWipeTs);
+    }
+    saveStoredCustomers(finalCustomers);
   }
 
+  // 4. Merge Expenses cleanly
+  let finalExpenses = loadStoredExpenses();
   if (Array.isArray(expenses)) {
-    const validExp = catalogWipeTs > 0
-      ? expenses.filter((e: any) => (e.timestamp ? new Date(e.timestamp).getTime() : 0) > catalogWipeTs)
-      : expenses;
-    saveStoredExpenses(validExp);
+    const expMap = new Map<string, any>();
+    finalExpenses.forEach((e: any) => { if (e?.id) expMap.set(e.id, e); });
+    expenses.forEach((inc: any) => {
+      if (!inc?.id) return;
+      expMap.set(inc.id, { ...(expMap.get(inc.id) || {}), ...inc });
+    });
+    finalExpenses = Array.from(expMap.values());
+    if (catalogWipeTs > 0) {
+      finalExpenses = finalExpenses.filter((e: any) => (e.date ? new Date(e.date).getTime() : (e.timestamp ? new Date(e.timestamp).getTime() : 0)) > catalogWipeTs);
+    }
+    finalExpenses.sort((a: any, b: any) => new Date(b.date || b.timestamp || 0).getTime() - new Date(a.date || a.timestamp || 0).getTime());
+    saveStoredExpenses(finalExpenses);
   }
 
+  // 5. Merge Credit Transactions cleanly
+  let finalCreditTxs = loadStoredCreditTxs();
   if (Array.isArray(creditTxs)) {
-    const validCredit = catalogWipeTs > 0
-      ? creditTxs.filter((t: any) => (t.timestamp ? new Date(t.timestamp).getTime() : 0) > catalogWipeTs)
-      : creditTxs;
-    saveStoredCreditTxs(validCredit);
+    const creditMap = new Map<string, any>();
+    finalCreditTxs.forEach((t: any) => { if (t?.id) creditMap.set(t.id, t); });
+    creditTxs.forEach((inc: any) => {
+      if (!inc?.id) return;
+      creditMap.set(inc.id, { ...(creditMap.get(inc.id) || {}), ...inc });
+    });
+    finalCreditTxs = Array.from(creditMap.values());
+    if (catalogWipeTs > 0) {
+      finalCreditTxs = finalCreditTxs.filter((t: any) => (t.date ? new Date(t.date).getTime() : (t.timestamp ? new Date(t.timestamp).getTime() : 0)) > catalogWipeTs);
+    }
+    finalCreditTxs.sort((a: any, b: any) => new Date(b.date || b.timestamp || 0).getTime() - new Date(a.date || a.timestamp || 0).getTime());
+    saveStoredCreditTxs(finalCreditTxs);
   }
 
   if (Array.isArray(auditLogs)) saveStoredAuditLogs(auditLogs);
@@ -1328,6 +1405,13 @@ app.post('/api/pos/sync', (req: Request, res: Response) => {
     success: true,
     lastWipeTimestamp: wipeTs,
     lastCatalogWipeTimestamp: catalogWipeTs,
+    products: finalProducts,
+    sales: finalSales,
+    customers: finalCustomers,
+    expenses: finalExpenses,
+    creditTxs: finalCreditTxs,
+    users: mergedUsersSafe,
+    settings: loadStoredSettings(),
     message: 'Data synchronized uniformly across devices.',
     serverTimestamp: new Date().toISOString(),
   });
@@ -1392,7 +1476,12 @@ app.post('/api/sales/record', (req: Request, res: Response) => {
   }
 
   const sales = loadStoredSales();
-  sales.unshift(sale);
+  const idx = sales.findIndex((s: any) => s.id === sale.id || s.receiptNumber === sale.receiptNumber);
+  if (idx >= 0) {
+    sales[idx] = { ...sales[idx], ...sale };
+  } else {
+    sales.unshift(sale);
+  }
   saveStoredSales(sales);
 
   // Update product inventory stock counts on server
@@ -1401,8 +1490,8 @@ app.post('/api/sales/record', (req: Request, res: Response) => {
     sale.items.forEach((item: any) => {
       const prod = products.find((p: any) => p.id === item.productId);
       if (prod) {
-        prod.stock = Math.max(0, (prod.stock || 0) - item.quantity);
-        prod.updatedAt = new Date().toISOString();
+        prod.currentStock = Math.max(0, (prod.currentStock || prod.stock || 0) - item.quantity);
+        prod.updatedDate = new Date().toISOString();
       }
     });
     saveStoredProducts(products);
@@ -1421,9 +1510,11 @@ app.post('/api/sales/:id/refund', (req: Request, res: Response) => {
     return res.status(404).json({ success: false, error: 'Sale record not found.' });
   }
 
+  sale.status = 'REFUNDED';
   sale.refunded = true;
   sale.refundReason = reason || 'Customer Refund';
   sale.refundedAt = new Date().toISOString();
+  sale.refundDate = sale.refundedAt;
   sale.refundedBy = staffName || 'Staff Member';
   saveStoredSales(sales);
 
@@ -1433,8 +1524,8 @@ app.post('/api/sales/:id/refund', (req: Request, res: Response) => {
     sale.items.forEach((item: any) => {
       const prod = products.find((p: any) => p.id === item.productId);
       if (prod) {
-        prod.stock = (prod.stock || 0) + item.quantity;
-        prod.updatedAt = new Date().toISOString();
+        prod.currentStock = (prod.currentStock || prod.stock || 0) + item.quantity;
+        prod.updatedDate = new Date().toISOString();
       }
     });
     saveStoredProducts(products);
@@ -1449,7 +1540,7 @@ app.get('/api/customers', (req: Request, res: Response) => {
   const catalogWipeTs = Number(meta.lastCatalogWipeTimestamp || meta.lastWipeTimestamp || 0);
   const raw = loadStoredCustomers();
   const customers = catalogWipeTs > 0
-    ? raw.filter((c: any) => (c.createdAt ? new Date(c.createdAt).getTime() : 0) > catalogWipeTs)
+    ? raw.filter((c: any) => (c.createdDate ? new Date(c.createdDate).getTime() : (c.createdAt ? new Date(c.createdAt).getTime() : 0)) > catalogWipeTs)
     : raw;
   res.json({ success: true, customers });
 });
@@ -1457,14 +1548,23 @@ app.get('/api/customers', (req: Request, res: Response) => {
 app.post('/api/customers/save', (req: Request, res: Response) => {
   const { customer, customers: batch } = req.body || {};
   if (Array.isArray(batch)) {
-    saveStoredCustomers(batch);
-    return res.json({ success: true, count: batch.length });
+    const list = loadStoredCustomers();
+    const map = new Map<string, any>();
+    list.forEach((c: any) => { if (c?.id) map.set(c.id, c); });
+    batch.forEach((c: any) => {
+      if (!c?.id) return;
+      const cur = map.get(c.id);
+      map.set(c.id, cur ? { ...cur, ...c } : c);
+    });
+    const merged = Array.from(map.values());
+    saveStoredCustomers(merged);
+    return res.json({ success: true, count: merged.length });
   }
   if (customer && customer.id) {
     const list = loadStoredCustomers();
     const idx = list.findIndex((c: any) => c.id === customer.id);
     if (idx >= 0) {
-      list[idx] = customer;
+      list[idx] = { ...list[idx], ...customer };
     } else {
       list.push(customer);
     }
@@ -1480,7 +1580,7 @@ app.get('/api/expenses', (req: Request, res: Response) => {
   const catalogWipeTs = Number(meta.lastCatalogWipeTimestamp || meta.lastWipeTimestamp || 0);
   const raw = loadStoredExpenses();
   const expenses = catalogWipeTs > 0
-    ? raw.filter((e: any) => (e.timestamp ? new Date(e.timestamp).getTime() : 0) > catalogWipeTs)
+    ? raw.filter((e: any) => (e.date ? new Date(e.date).getTime() : (e.timestamp ? new Date(e.timestamp).getTime() : 0)) > catalogWipeTs)
     : raw;
   res.json({ success: true, expenses });
 });
@@ -1488,12 +1588,25 @@ app.get('/api/expenses', (req: Request, res: Response) => {
 app.post('/api/expenses/save', (req: Request, res: Response) => {
   const { expense, expenses: batch } = req.body || {};
   if (Array.isArray(batch)) {
-    saveStoredExpenses(batch);
-    return res.json({ success: true, count: batch.length });
+    const list = loadStoredExpenses();
+    const map = new Map<string, any>();
+    list.forEach((e: any) => { if (e?.id) map.set(e.id, e); });
+    batch.forEach((e: any) => {
+      if (!e?.id) return;
+      map.set(e.id, { ...(map.get(e.id) || {}), ...e });
+    });
+    const merged = Array.from(map.values()).sort((a: any, b: any) => new Date(b.date || b.timestamp || 0).getTime() - new Date(a.date || a.timestamp || 0).getTime());
+    saveStoredExpenses(merged);
+    return res.json({ success: true, count: merged.length });
   }
   if (expense && expense.id) {
     const list = loadStoredExpenses();
-    list.unshift(expense);
+    const idx = list.findIndex((e: any) => e.id === expense.id);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...expense };
+    } else {
+      list.unshift(expense);
+    }
     saveStoredExpenses(list);
     return res.json({ success: true, expense });
   }
@@ -1506,7 +1619,7 @@ app.get('/api/credit-txs', (req: Request, res: Response) => {
   const catalogWipeTs = Number(meta.lastCatalogWipeTimestamp || meta.lastWipeTimestamp || 0);
   const raw = loadStoredCreditTxs();
   const creditTxs = catalogWipeTs > 0
-    ? raw.filter((t: any) => (t.timestamp ? new Date(t.timestamp).getTime() : 0) > catalogWipeTs)
+    ? raw.filter((t: any) => (t.date ? new Date(t.date).getTime() : (t.timestamp ? new Date(t.timestamp).getTime() : 0)) > catalogWipeTs)
     : raw;
   res.json({ success: true, creditTxs });
 });
@@ -1514,12 +1627,25 @@ app.get('/api/credit-txs', (req: Request, res: Response) => {
 app.post('/api/credit-txs/save', (req: Request, res: Response) => {
   const { transaction, creditTxs: batch } = req.body || {};
   if (Array.isArray(batch)) {
-    saveStoredCreditTxs(batch);
-    return res.json({ success: true, count: batch.length });
+    const list = loadStoredCreditTxs();
+    const map = new Map<string, any>();
+    list.forEach((t: any) => { if (t?.id) map.set(t.id, t); });
+    batch.forEach((t: any) => {
+      if (!t?.id) return;
+      map.set(t.id, { ...(map.get(t.id) || {}), ...t });
+    });
+    const merged = Array.from(map.values()).sort((a: any, b: any) => new Date(b.date || b.timestamp || 0).getTime() - new Date(a.date || a.timestamp || 0).getTime());
+    saveStoredCreditTxs(merged);
+    return res.json({ success: true, count: merged.length });
   }
   if (transaction && transaction.id) {
     const list = loadStoredCreditTxs();
-    list.unshift(transaction);
+    const idx = list.findIndex((t: any) => t.id === transaction.id);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...transaction };
+    } else {
+      list.unshift(transaction);
+    }
     saveStoredCreditTxs(list);
     return res.json({ success: true, transaction });
   }

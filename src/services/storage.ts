@@ -1804,13 +1804,52 @@ class StorageService {
       return { isInitialized: this.isStoreInitialized(), wiped: false, productsCount: 0, salesCount: 0 };
     }
     try {
-      const res = await fetch('/api/pos/all-data');
-      if (!res.ok) {
-        return { isInitialized: this.isStoreInitialized(), wiped: false, productsCount: this.getProducts().length, salesCount: this.getSales().length };
+      const localProducts = this.getProducts();
+      const localSales = this.getSales();
+      const localCustomers = this.getCustomers();
+      const localExpenses = this.getExpenses();
+      const localCreditTxs = this.getCreditTransactions();
+      const localStaff = this.getStaffList();
+      const localDeletedUserIds = this.getDeletedUserIds();
+      const localSettings = this.getSettings();
+
+      let data: any = null;
+      try {
+        const syncRes = await fetch('/api/pos/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            users: localStaff,
+            deletedUserIds: localDeletedUserIds,
+            products: localProducts,
+            sales: localSales,
+            customers: localCustomers,
+            expenses: localExpenses,
+            creditTxs: localCreditTxs,
+            settings: localSettings,
+          }),
+        });
+        if (syncRes.ok) {
+          data = await syncRes.json();
+        }
+      } catch (postErr) {
+        console.warn('POST /api/pos/sync notice:', postErr);
       }
-      const data = await res.json();
-      if (!data.success) {
-        return { isInitialized: this.isStoreInitialized(), wiped: false, productsCount: this.getProducts().length, salesCount: this.getSales().length };
+
+      if (!data || !data.success) {
+        const getRes = await fetch('/api/pos/all-data');
+        if (getRes.ok) {
+          data = await getRes.json();
+        }
+      }
+
+      if (!data || !data.success) {
+        return {
+          isInitialized: this.isStoreInitialized(),
+          wiped: false,
+          productsCount: this.getProducts().length,
+          salesCount: this.getSales().length,
+        };
       }
 
       if (Array.isArray(data.deletedUserIds)) {
@@ -1863,32 +1902,37 @@ class StorageService {
         }
       }
 
-      // Sync Products (respect server data)
+      // 1. Merge Products without losing local unsynced products
       if (Array.isArray(data.products)) {
-        localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(data.products));
+        this.mergeRemoteProducts(data.products);
       }
 
-      // Sync Sales
+      // 2. Merge Sales without losing local unsynced sales
       if (Array.isArray(data.sales)) {
-        localStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify(data.sales));
+        this.mergeRemoteSales(data.sales);
       }
 
-      // Sync Customers
+      // 3. Merge Customers without losing local unsynced customers
       if (Array.isArray(data.customers)) {
-        localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(data.customers));
+        this.mergeRemoteCustomers(data.customers);
       }
 
-      // Sync Expenses
+      // 4. Merge Expenses without losing local unsynced expenses
       if (Array.isArray(data.expenses)) {
-        localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(data.expenses));
+        this.mergeRemoteExpenses(data.expenses);
       }
 
-      // Sync Settings
+      // 5. Merge Credit Transactions without losing local unsynced credit records
+      if (Array.isArray(data.creditTxs)) {
+        this.mergeRemoteCreditTxs(data.creditTxs);
+      }
+
+      // 6. Sync Settings
       if (data.settings && typeof data.settings === 'object' && data.settings.storeName) {
         localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(data.settings));
       }
 
-      // Sync Staff
+      // 7. Sync Staff
       if (serverHasUsers) {
         const merged = this.mergeServerUsersWithLocal(data.users);
         this.saveStaffList(merged);
@@ -2165,12 +2209,7 @@ class StorageService {
         }
       });
 
-      if (remoteProds.length > 0) {
-        this.mergeRemoteProducts(remoteProds, onUpdate);
-      } else {
-        localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify([]));
-        if (onUpdate) onUpdate([]);
-      }
+      this.mergeRemoteProducts(remoteProds, onUpdate);
     };
 
     // 1. Immediate fetch on mount
@@ -2850,6 +2889,78 @@ class StorageService {
     }
   }
 
+  async pushSalesBatchToFirestore(sales: Sale[]): Promise<void> {
+    if (this.isFirestoreQuotaExceeded || !sales || sales.length === 0) return;
+    try {
+      const CHUNK_SIZE = 400;
+      for (let i = 0; i < sales.length; i += CHUNK_SIZE) {
+        const chunk = sales.slice(i, i + CHUNK_SIZE);
+        const batch = writeBatch(db);
+        for (const s of chunk) {
+          const ref = doc(db, 'sales', s.id);
+          batch.set(ref, s, { merge: true });
+        }
+        await batch.commit();
+      }
+    } catch (err) {
+      if (this.handleFirestoreQuotaError(err)) return;
+      console.warn('Firestore pushSalesBatch notice:', err);
+    }
+  }
+
+  mergeRemoteSales(remoteSales: Sale[], onUpdate?: (sales: Sale[]) => void): Sale[] {
+    const wipeTs = this.getCatalogWipeTimestamp();
+    const validRemote = wipeTs > 0
+      ? remoteSales.filter((s) => this.isRecordValidAfterWipe(s, wipeTs))
+      : remoteSales;
+
+    const localSales = this.getSales();
+    const remoteMap = new Map<string, Sale>();
+    validRemote.forEach((s) => remoteMap.set(s.id, s));
+
+    const missingInRemote: Sale[] = [];
+    localSales.forEach((local) => {
+      const match = remoteMap.get(local.id) || validRemote.find((r) => r.receiptNumber && local.receiptNumber && r.receiptNumber === local.receiptNumber);
+      if (!match) {
+        missingInRemote.push(local);
+      }
+    });
+
+    if (missingInRemote.length > 0) {
+      this.pushSalesBatchToFirestore(missingInRemote).catch(() => {});
+    }
+
+    const mergedMap = new Map<string, Sale>();
+    validRemote.forEach((s) => mergedMap.set(s.id, s));
+    missingInRemote.forEach((s) => mergedMap.set(s.id, s));
+
+    // Handle refunded status precedence if local or remote marked refunded
+    localSales.forEach((l) => {
+      const existing = mergedMap.get(l.id);
+      if (existing && (l.status === 'REFUNDED' || (l as any).refunded)) {
+        mergedMap.set(l.id, {
+          ...existing,
+          status: 'REFUNDED',
+          refundReason: l.refundReason,
+          refundDate: l.refundDate,
+          refundedBy: l.refundedBy,
+        });
+      }
+    });
+
+    const merged = Array.from(mergedMap.values()).sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
+
+    this.saveSales(merged);
+
+    if (onUpdate) {
+      onUpdate(merged);
+    }
+
+    return merged;
+  }
+
   syncSalesWithFirestore(onUpdate?: (sales: Sale[]) => void): () => void {
     if (!this.isBrowser()) return () => {};
 
@@ -2863,14 +2974,7 @@ class StorageService {
         }
       });
 
-      if (remoteSales.length > 0) {
-        remoteSales.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-        this.saveSales(remoteSales);
-        if (onUpdate) onUpdate(remoteSales);
-      } else {
-        localStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify([]));
-        if (onUpdate) onUpdate([]);
-      }
+      this.mergeRemoteSales(remoteSales, onUpdate);
     };
 
     getDocs(collection(db, 'sales'))
@@ -3013,6 +3117,7 @@ class StorageService {
     }
 
     this.saveSales(sales);
+    this.pushSaleToFirestore(sale).catch(() => {});
     this.addAuditLog('SALE_REFUNDED', 'REFUND', `Sale #${sale.receiptNumber} refunded (${sale.grandTotal} ETB). Reason: ${reason}. Authorized by ${staff.name}.`);
     try {
       if (typeof navigator !== 'undefined' && navigator.onLine) {
@@ -3075,6 +3180,59 @@ class StorageService {
     }
   }
 
+  mergeRemoteCustomers(remoteCustomers: Customer[], onUpdate?: (customers: Customer[]) => void): Customer[] {
+    const wipeTs = this.getCatalogWipeTimestamp();
+    const validRemote = wipeTs > 0
+      ? remoteCustomers.filter((c) => this.isRecordValidAfterWipe(c, wipeTs))
+      : remoteCustomers;
+
+    const localCustomers = this.getCustomers();
+    const remoteMap = new Map<string, Customer>();
+    validRemote.forEach((c) => remoteMap.set(c.id, c));
+
+    const missingInRemote: Customer[] = [];
+    localCustomers.forEach((local) => {
+      const match = remoteMap.get(local.id) || validRemote.find((r) => (r.phone && local.phone && r.phone === local.phone) || (r.name && local.name && r.name.toLowerCase() === local.name.toLowerCase()));
+      if (!match) {
+        missingInRemote.push(local);
+      }
+    });
+
+    if (missingInRemote.length > 0) {
+      this.pushCustomersBatchToFirestore(missingInRemote).catch(() => {});
+    }
+
+    const mergedMap = new Map<string, Customer>();
+    validRemote.forEach((c) => mergedMap.set(c.id, c));
+    missingInRemote.forEach((c) => mergedMap.set(c.id, c));
+
+    // Update with most recent balance / stamped paid info from local
+    localCustomers.forEach((l) => {
+      const cur = mergedMap.get(l.id);
+      if (cur) {
+        if (l.isStampedPaid && !cur.isStampedPaid) {
+          mergedMap.set(l.id, {
+            ...cur,
+            isStampedPaid: true,
+            currentBalance: l.currentBalance,
+            lastPaidDate: l.lastPaidDate,
+            lastPaidStaff: l.lastPaidStaff,
+            lastPaidAmount: l.lastPaidAmount,
+          });
+        }
+      }
+    });
+
+    const merged = Array.from(mergedMap.values());
+    localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(merged));
+
+    if (onUpdate) {
+      onUpdate(merged);
+    }
+
+    return merged;
+  }
+
   syncCustomersWithFirestore(onUpdate?: (customers: Customer[]) => void): () => void {
     if (!this.isBrowser()) return () => {};
 
@@ -3088,13 +3246,7 @@ class StorageService {
         }
       });
 
-      if (remoteCustomers.length > 0) {
-        localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(remoteCustomers));
-        if (onUpdate) onUpdate(remoteCustomers);
-      } else {
-        localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify([]));
-        if (onUpdate) onUpdate([]);
-      }
+      this.mergeRemoteCustomers(remoteCustomers, onUpdate);
     };
 
     getDocs(collection(db, 'customers'))
@@ -3150,6 +3302,63 @@ class StorageService {
     }
   }
 
+  async pushCreditTxsBatchToFirestore(txs: CreditTransaction[]): Promise<void> {
+    if (this.isFirestoreQuotaExceeded || !txs || txs.length === 0) return;
+    try {
+      const CHUNK_SIZE = 400;
+      for (let i = 0; i < txs.length; i += CHUNK_SIZE) {
+        const chunk = txs.slice(i, i + CHUNK_SIZE);
+        const batch = writeBatch(db);
+        for (const t of chunk) {
+          const ref = doc(db, 'credit_transactions', t.id);
+          batch.set(ref, t, { merge: true });
+        }
+        await batch.commit();
+      }
+    } catch (err) {
+      if (this.handleFirestoreQuotaError(err)) return;
+      console.warn('Firestore pushCreditTxsBatch notice:', err);
+    }
+  }
+
+  mergeRemoteCreditTxs(remoteTxs: CreditTransaction[], onUpdate?: (txs: CreditTransaction[]) => void): CreditTransaction[] {
+    const wipeTs = this.getCatalogWipeTimestamp();
+    const validRemote = wipeTs > 0
+      ? remoteTxs.filter((t) => this.isRecordValidAfterWipe(t, wipeTs))
+      : remoteTxs;
+
+    const localTxs = this.getCreditTransactions();
+    const remoteMap = new Map<string, CreditTransaction>();
+    validRemote.forEach((t) => remoteMap.set(t.id, t));
+
+    const missingInRemote: CreditTransaction[] = [];
+    localTxs.forEach((local) => {
+      if (!remoteMap.has(local.id)) {
+        missingInRemote.push(local);
+      }
+    });
+
+    if (missingInRemote.length > 0) {
+      this.pushCreditTxsBatchToFirestore(missingInRemote).catch(() => {});
+    }
+
+    const mergedMap = new Map<string, CreditTransaction>();
+    validRemote.forEach((t) => mergedMap.set(t.id, t));
+    missingInRemote.forEach((t) => mergedMap.set(t.id, t));
+
+    const merged = Array.from(mergedMap.values()).sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
+
+    localStorage.setItem(STORAGE_KEYS.CREDIT_TXS, JSON.stringify(merged));
+
+    if (onUpdate) {
+      onUpdate(merged);
+    }
+
+    return merged;
+  }
+
   syncCreditTransactionsWithFirestore(onUpdate?: (txs: CreditTransaction[]) => void): () => void {
     if (!this.isBrowser()) return () => {};
 
@@ -3163,14 +3372,7 @@ class StorageService {
         }
       });
 
-      if (remoteTxs.length > 0) {
-        remoteTxs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-        localStorage.setItem(STORAGE_KEYS.CREDIT_TXS, JSON.stringify(remoteTxs));
-        if (onUpdate) onUpdate(remoteTxs);
-      } else {
-        localStorage.setItem(STORAGE_KEYS.CREDIT_TXS, JSON.stringify([]));
-        if (onUpdate) onUpdate([]);
-      }
+      this.mergeRemoteCreditTxs(remoteTxs, onUpdate);
     };
 
     getDocs(collection(db, 'credit_transactions'))
@@ -3247,7 +3449,19 @@ class StorageService {
     this.pushCreditTransactionToFirestore(tx).catch(() => {});
 
     this.addAuditLog('CREDIT_TRANSACTION', 'CREDIT', `${type} of ${amount} ETB on customer account ${cust.name}. New balance: ${newBalance} ETB.`);
-    this.enqueueSync('credit', 'create', tx);
+    try {
+      if (typeof navigator !== 'undefined' && navigator.onLine) {
+        fetch('/api/credit-txs/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transaction: tx }),
+        }).catch(() => {});
+      } else {
+        this.enqueueSync('credit', 'create', tx);
+      }
+    } catch {
+      this.enqueueSync('credit', 'create', tx);
+    }
 
     return { success: true, newBalance };
   }
@@ -3303,7 +3517,19 @@ class StorageService {
       'CREDIT',
       `Customer account "${cust.name}" officially stamped PAID by ${staffName}. Settled ${settledAmount} ETB.`
     );
-    this.enqueueSync('credit', 'create', tx);
+    try {
+      if (typeof navigator !== 'undefined' && navigator.onLine) {
+        fetch('/api/credit-txs/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transaction: tx }),
+        }).catch(() => {});
+      } else {
+        this.enqueueSync('credit', 'create', tx);
+      }
+    } catch {
+      this.enqueueSync('credit', 'create', tx);
+    }
 
     return { success: true, settledAmount, customer: cust };
   }
@@ -3319,6 +3545,63 @@ class StorageService {
     }
   }
 
+  async pushExpensesBatchToFirestore(expenses: StoreExpense[]): Promise<void> {
+    if (this.isFirestoreQuotaExceeded || !expenses || expenses.length === 0) return;
+    try {
+      const CHUNK_SIZE = 400;
+      for (let i = 0; i < expenses.length; i += CHUNK_SIZE) {
+        const chunk = expenses.slice(i, i + CHUNK_SIZE);
+        const batch = writeBatch(db);
+        for (const e of chunk) {
+          const ref = doc(db, 'expenses', e.id);
+          batch.set(ref, e, { merge: true });
+        }
+        await batch.commit();
+      }
+    } catch (err) {
+      if (this.handleFirestoreQuotaError(err)) return;
+      console.warn('Firestore pushExpensesBatch notice:', err);
+    }
+  }
+
+  mergeRemoteExpenses(remoteExpenses: StoreExpense[], onUpdate?: (expenses: StoreExpense[]) => void): StoreExpense[] {
+    const wipeTs = this.getCatalogWipeTimestamp();
+    const validRemote = wipeTs > 0
+      ? remoteExpenses.filter((e) => this.isRecordValidAfterWipe(e, wipeTs))
+      : remoteExpenses;
+
+    const localExpenses = this.getExpenses();
+    const remoteMap = new Map<string, StoreExpense>();
+    validRemote.forEach((e) => remoteMap.set(e.id, e));
+
+    const missingInRemote: StoreExpense[] = [];
+    localExpenses.forEach((local) => {
+      if (!remoteMap.has(local.id)) {
+        missingInRemote.push(local);
+      }
+    });
+
+    if (missingInRemote.length > 0) {
+      this.pushExpensesBatchToFirestore(missingInRemote).catch(() => {});
+    }
+
+    const mergedMap = new Map<string, StoreExpense>();
+    validRemote.forEach((e) => mergedMap.set(e.id, e));
+    missingInRemote.forEach((e) => mergedMap.set(e.id, e));
+
+    const merged = Array.from(mergedMap.values()).sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
+
+    localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(merged));
+
+    if (onUpdate) {
+      onUpdate(merged);
+    }
+
+    return merged;
+  }
+
   syncExpensesWithFirestore(onUpdate?: (expenses: StoreExpense[]) => void): () => void {
     if (!this.isBrowser()) return () => {};
 
@@ -3332,14 +3615,7 @@ class StorageService {
         }
       });
 
-      if (remoteExpenses.length > 0) {
-        remoteExpenses.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-        localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(remoteExpenses));
-        if (onUpdate) onUpdate(remoteExpenses);
-      } else {
-        localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify([]));
-        if (onUpdate) onUpdate([]);
-      }
+      this.mergeRemoteExpenses(remoteExpenses, onUpdate);
     };
 
     getDocs(collection(db, 'expenses'))
@@ -4156,16 +4432,16 @@ class StorageService {
         await this.pushCustomersBatchToFirestore(customers);
       }
       const sales = this.getSales();
-      for (const s of sales) {
-        await this.pushSaleToFirestore(s);
+      if (sales.length > 0) {
+        await this.pushSalesBatchToFirestore(sales);
       }
       const txs = this.getCreditTransactions();
-      for (const t of txs) {
-        await this.pushCreditTransactionToFirestore(t);
+      if (txs.length > 0) {
+        await this.pushCreditTxsBatchToFirestore(txs);
       }
       const expenses = this.getExpenses();
-      for (const e of expenses) {
-        await this.pushExpenseToFirestore(e);
+      if (expenses.length > 0) {
+        await this.pushExpensesBatchToFirestore(expenses);
       }
       const settings = this.getSettings();
       await this.pushSettingsToFirestore(settings);
