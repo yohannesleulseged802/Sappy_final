@@ -419,55 +419,61 @@ class AuthService {
     };
 
     // 7. Write to Cloud Firestore (with safety timeout so quota exhaustion never blocks account creation)
-    try {
-      const firestoreTimeout = new Promise<void>((resolve) => setTimeout(resolve, 1200));
-      const firestoreOps = (async () => {
-        try {
-          await setDoc(doc(db, 'users', finalUid), {
-            uid: finalUid,
-            id: finalUid,
-            employeeId: newStaff.employeeId,
-            firstName: newStaff.firstName,
-            lastName: newStaff.lastName,
-            fullName: newStaff.name,
-            name: newStaff.name,
-            username: newStaff.username,
-            displayName: newStaff.displayName || newStaff.name,
-            email: newStaff.email,
-            phone: newStaff.phone,
-            address: newStaff.address,
-            city: newStaff.city,
-            profilePictureUrl: newStaff.profilePictureUrl,
-            avatar: newStaff.profilePictureUrl,
-            jobTitle: newStaff.jobTitle,
-            department: newStaff.department,
-            role: newStaff.role,
-            pin: newStaff.pin,
-            password: newStaff.password,
-            accountStatus: newStaff.approvalStatus,
-            approvalStatus: newStaff.approvalStatus,
-            active: newStaff.active,
-            createdAt: newStaff.createdAt,
-            updatedAt: newStaff.updatedAt,
-            approvedAt: newStaff.approvedAt,
-            approvedBy: newStaff.approvedBy,
-          }, { merge: true });
+    if (!storage.isQuotaExceeded()) {
+      try {
+        const firestoreTimeout = new Promise<void>((resolve) => setTimeout(resolve, 1200));
+        const firestoreOps = (async () => {
+          try {
+            await setDoc(doc(db, 'users', finalUid), {
+              uid: finalUid,
+              id: finalUid,
+              employeeId: newStaff.employeeId,
+              firstName: newStaff.firstName,
+              lastName: newStaff.lastName,
+              fullName: newStaff.name,
+              name: newStaff.name,
+              username: newStaff.username,
+              displayName: newStaff.displayName || newStaff.name,
+              email: newStaff.email,
+              phone: newStaff.phone,
+              address: newStaff.address,
+              city: newStaff.city,
+              profilePictureUrl: newStaff.profilePictureUrl,
+              avatar: newStaff.profilePictureUrl,
+              jobTitle: newStaff.jobTitle,
+              department: newStaff.department,
+              role: newStaff.role,
+              pin: newStaff.pin,
+              password: newStaff.password,
+              accountStatus: newStaff.approvalStatus,
+              approvalStatus: newStaff.approvalStatus,
+              active: newStaff.active,
+              createdAt: newStaff.createdAt,
+              updatedAt: newStaff.updatedAt,
+              approvedAt: newStaff.approvedAt,
+              approvedBy: newStaff.approvedBy,
+            }, { merge: true });
 
-          if (isApprovedByPasscode) {
-            await setDoc(doc(db, 'system', 'setup'), {
-              isInitialized: true,
-              initializedAt: new Date().toISOString(),
-              initialAdminUid: finalUid,
-            });
+            if (isApprovedByPasscode) {
+              await setDoc(doc(db, 'system', 'setup'), {
+                isInitialized: true,
+                initializedAt: new Date().toISOString(),
+                initialAdminUid: finalUid,
+              });
+            }
+          } catch (fsErr) {
+            if (!storage.handleFirestoreQuotaError(fsErr)) {
+              console.warn('Firestore write notice (continuing with offline-first persistence):', fsErr);
+            }
           }
-        } catch (fsErr) {
+        })();
+
+        await Promise.race([firestoreOps, firestoreTimeout]);
+      } catch (fsErr) {
+        if (!storage.handleFirestoreQuotaError(fsErr)) {
           console.warn('Firestore write notice (continuing with offline-first persistence):', fsErr);
         }
-      })();
-
-      await Promise.race([firestoreOps, firestoreTimeout]);
-    } catch (fsErr) {
-      console.warn('Firestore write notice (continuing with offline-first persistence):', fsErr);
+      }
     }
 
     // 8. Save to Local Storage Database
@@ -530,29 +536,33 @@ class AuthService {
         storage.setCurrentStaff(staffId);
       }
 
-      // 2. Update Firestore if accessible (bounded timeout)
-      try {
-        const updatePromise = setDoc(
-          doc(db, 'users', staffId),
-          {
-            fullName: updatedStaff.name,
-            firstName: updatedStaff.firstName || updatedStaff.name.split(' ')[0],
-            lastName: updatedStaff.lastName || updatedStaff.name.split(' ').slice(1).join(' '),
-            email: updatedStaff.email,
-            phone: updatedStaff.phone || '',
-            address: updatedStaff.address || '',
-            city: updatedStaff.city || '',
-            jobTitle: updatedStaff.jobTitle || '',
-            department: updatedStaff.department || '',
-            profilePictureUrl: updatedStaff.profilePictureUrl || updatedStaff.avatar || '',
-            updatedAt: updatedStaff.updatedAt,
-          },
-          { merge: true }
-        );
-        const updateTimeout = new Promise<void>((resolve) => setTimeout(resolve, 1200));
-        await Promise.race([updatePromise, updateTimeout]);
-      } catch (err) {
-        console.warn('Firestore profile update notice:', err);
+      // 2. Update Firestore if accessible and within quota (bounded timeout)
+      if (!storage.isQuotaExceeded()) {
+        try {
+          const updatePromise = setDoc(
+            doc(db, 'users', staffId),
+            {
+              fullName: updatedStaff.name,
+              firstName: updatedStaff.firstName || updatedStaff.name.split(' ')[0],
+              lastName: updatedStaff.lastName || updatedStaff.name.split(' ').slice(1).join(' '),
+              email: updatedStaff.email,
+              phone: updatedStaff.phone || '',
+              address: updatedStaff.address || '',
+              city: updatedStaff.city || '',
+              jobTitle: updatedStaff.jobTitle || '',
+              department: updatedStaff.department || '',
+              profilePictureUrl: updatedStaff.profilePictureUrl || updatedStaff.avatar || '',
+              updatedAt: updatedStaff.updatedAt,
+            },
+            { merge: true }
+          );
+          const updateTimeout = new Promise<void>((resolve) => setTimeout(resolve, 1200));
+          await Promise.race([updatePromise, updateTimeout]);
+        } catch (err) {
+          if (!storage.handleFirestoreQuotaError(err)) {
+            console.warn('Firestore profile update notice:', err);
+          }
+        }
       }
 
       // 3. Update server API

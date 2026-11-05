@@ -11,6 +11,7 @@ import {
   X,
   AlertCircle,
   Check,
+  Database,
 } from 'lucide-react';
 import {Sale, StoreSettings, Staff} from '../types';
 import {storage} from '../services/storage';
@@ -19,6 +20,7 @@ import {sound} from '../services/sound';
 import {BarcodeRenderer} from '../components/common/BarcodeRenderer';
 import {PinModal} from '../components/common/PinModal';
 import {A4InvoiceModal} from '../components/pos/A4InvoiceModal';
+import {SalesLedgerDiagnosticsModal} from '../components/pos/SalesLedgerDiagnosticsModal';
 import {toast} from '../services/toast';
 
 interface SalesLedgerViewProps {
@@ -47,6 +49,10 @@ export const SalesLedgerView: React.FC<SalesLedgerViewProps> = ({
   // PDF Export Format State (A4 vs Letter)
   const [detailPdfFormat, setDetailPdfFormat] = useState<'a4' | 'letter'>('a4');
   const [isExportingPdf, setIsExportingPdf] = useState(false);
+
+  // Sync Diagnostics Modal State (IndexedDB ↔ Firestore)
+  const [isDiagnosticsModalOpen, setIsDiagnosticsModalOpen] = useState(false);
+  const unsyncedCount = useMemo(() => sales.filter((s) => !s.isSynced).length, [sales]);
 
   const handleExportPdf = async (sale: Sale, format: 'a4' | 'letter' = detailPdfFormat) => {
     try {
@@ -154,6 +160,25 @@ export const SalesLedgerView: React.FC<SalesLedgerViewProps> = ({
             <option value="COMPLETED">Completed</option>
             <option value="REFUNDED">Refunded</option>
           </select>
+
+          {/* Sync Diagnostics (IndexedDB ↔ Firestore) */}
+          <button
+            onClick={() => setIsDiagnosticsModalOpen(true)}
+            title="Inspect and resolve orphaned or failed-to-sync sales between IndexedDB & Firestore"
+            className={`p-2 border rounded-xl transition text-xs font-bold flex items-center gap-1.5 ${
+              unsyncedCount > 0
+                ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 hover:bg-amber-100 shadow-2xs'
+                : 'border-stone-200 dark:border-stone-800 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800'
+            }`}
+          >
+            <Database className="w-3.5 h-3.5 text-amber-500" />
+            <span className="hidden sm:inline">Sync Diagnostics</span>
+            {unsyncedCount > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-white text-[10px] font-black">
+                {unsyncedCount}
+              </span>
+            )}
+          </button>
 
           {/* Export to CSV */}
           <button
@@ -648,6 +673,13 @@ export const SalesLedgerView: React.FC<SalesLedgerViewProps> = ({
         isOpen={!!invoiceSale}
         onClose={() => setInvoiceSale(null)}
         defaultFormat={detailPdfFormat}
+      />
+
+      {/* Sales Ledger Sync Diagnostics Modal (IndexedDB ↔ Firestore) */}
+      <SalesLedgerDiagnosticsModal
+        isOpen={isDiagnosticsModalOpen}
+        onClose={() => setIsDiagnosticsModalOpen(false)}
+        onDataChanged={onRefreshData}
       />
     </div>
   );

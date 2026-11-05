@@ -6,7 +6,14 @@ import {
   ActionCodeSettings,
   Auth,
 } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer, Firestore } from 'firebase/firestore';
+import {
+  getFirestore,
+  doc,
+  getDocFromServer,
+  Firestore,
+  disableNetwork,
+  enableNetwork,
+} from 'firebase/firestore';
 
 /**
  * Firebase Client Configuration
@@ -33,14 +40,52 @@ export const db: Firestore = appletConfig.firestoreDatabaseId
   ? getFirestore(firebaseApp, appletConfig.firestoreDatabaseId)
   : getFirestore(firebaseApp);
 
-// Validate connection to Firestore per Firebase integration specifications
+/**
+ * Pause Firestore network connection when quota is exceeded to eliminate retry backoff logs
+ */
+export async function pauseFirestoreNetwork(): Promise<void> {
+  if (typeof window === 'undefined') return;
+  try {
+    await disableNetwork(db);
+  } catch {
+    // Non-fatal
+  }
+}
+
+/**
+ * Resume Firestore network connection when daily quota resets at 00:00 UTC
+ */
+export async function resumeFirestoreNetwork(): Promise<void> {
+  if (typeof window === 'undefined') return;
+  try {
+    await enableNetwork(db);
+  } catch {
+    // Non-fatal
+  }
+}
+
+// Validate connection to Firestore per Firebase integration specifications (if not quota paused)
 if (typeof window !== 'undefined') {
-  getDocFromServer(doc(db, 'system', 'setup')).catch((err) => {
-    // Non-fatal if offline or uninitialized
-    if (err instanceof Error && err.message.includes('the client is offline')) {
-      console.warn('Firestore offline notice:', err.message);
-    }
-  });
+  const isQuotaPaused =
+    localStorage.getItem('sappy_firestore_quota_exceeded_until') &&
+    Number(localStorage.getItem('sappy_firestore_quota_exceeded_until')) > Date.now();
+
+  if (isQuotaPaused) {
+    pauseFirestoreNetwork();
+  } else {
+    getDocFromServer(doc(db, 'system', 'setup')).catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err || '');
+      if (
+        msg.includes('the client is offline') ||
+        msg.includes('resource-exhausted') ||
+        msg.includes('Quota')
+      ) {
+        pauseFirestoreNetwork();
+        return;
+      }
+      console.warn('Firestore initialization notice:', msg);
+    });
+  }
 }
 
 export interface PasswordResetResult {

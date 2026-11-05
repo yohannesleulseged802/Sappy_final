@@ -331,3 +331,36 @@ export interface EndOfDayReport {
   varianceReason?: string;
   notes?: string;
 }
+
+export type DiagnosticIssueType =
+  | 'ORPHAN_LOCAL'      // In IndexedDB/local, missing in Cloud Firestore
+  | 'ORPHAN_CLOUD'      // In Cloud Firestore, missing in IndexedDB/local
+  | 'STATUS_MISMATCH'   // Present in both, but status or amount differs
+  | 'QUEUE_STUCK'       // In offline sync queue with failed retries
+  | 'IN_SYNC';          // Perfectly synced in both
+
+export interface DiagnosticDiscrepancy {
+  id: string; // sale id or queue id
+  receiptNumber: string;
+  issueType: DiagnosticIssueType;
+  title: string;
+  description: string;
+  localSale?: Sale;
+  cloudSale?: Sale;
+  queueItem?: SyncQueueItem;
+  detectedAt: string;
+  severity: 'high' | 'medium' | 'info';
+}
+
+export interface SalesDiagnosticReport {
+  scannedAt: string;
+  durationMs: number;
+  totalIndexedDbSales: number;
+  totalCloudSales: number;
+  healthyCount: number;
+  orphanedLocalCount: number;
+  orphanedCloudCount: number;
+  mismatchCount: number;
+  stuckQueueCount: number;
+  discrepancies: DiagnosticDiscrepancy[];
+}

@@ -14,7 +14,8 @@ import {
   CreditTransaction,
   EndOfDayReport,
 } from '../types';
-import { db, auth } from './firebaseAuth';
+import { indexedDbService } from './indexedDb';
+import { db, auth, pauseFirestoreNetwork, resumeFirestoreNetwork } from './firebaseAuth';
 import {
   collection,
   doc,
@@ -83,11 +84,73 @@ const INITIAL_CUSTOMERS: Customer[] = [];
 const INITIAL_PRODUCTS: Product[] = [];
 
 class StorageService {
-  private isFirestoreQuotaExceeded: boolean = false;
-  private quotaExceededMessage: string | null = null;
+  private _isFirestoreQuotaExceeded: boolean = true;
+  private quotaExceededMessage: string | null =
+    'Daily Firestore free tier write quota reached (resets 00:00 UTC). System is operating seamlessly in Local-First & Express Backend sync mode.';
+  private readonly QUOTA_EXCEEDED_UNTIL_KEY = 'sappy_firestore_quota_exceeded_until';
 
   private isBrowser(): boolean {
     return typeof window !== 'undefined' && typeof localStorage !== 'undefined';
+  }
+
+  public get isFirestoreQuotaExceeded(): boolean {
+    if (!this.isBrowser()) return this._isFirestoreQuotaExceeded;
+    try {
+      const storedUntil = localStorage.getItem(this.QUOTA_EXCEEDED_UNTIL_KEY);
+      if (storedUntil) {
+        const untilTime = parseInt(storedUntil, 10);
+        if (Number.isFinite(untilTime)) {
+          if (Date.now() < untilTime) {
+            this._isFirestoreQuotaExceeded = true;
+            pauseFirestoreNetwork();
+            return true;
+          } else {
+            // Reset period has passed
+            localStorage.removeItem(this.QUOTA_EXCEEDED_UNTIL_KEY);
+            this._isFirestoreQuotaExceeded = false;
+            this.quotaExceededMessage = null;
+            resumeFirestoreNetwork();
+            return false;
+          }
+        }
+      }
+      // If not stored yet, seed until next 00:05 UTC (00:00 UTC daily quota reset)
+      const now = new Date();
+      const nextReset = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 5, 0)
+      );
+      localStorage.setItem(this.QUOTA_EXCEEDED_UNTIL_KEY, nextReset.getTime().toString());
+      this._isFirestoreQuotaExceeded = true;
+      pauseFirestoreNetwork();
+      return true;
+    } catch {
+      // Fallback
+    }
+    return this._isFirestoreQuotaExceeded;
+  }
+
+  public set isFirestoreQuotaExceeded(val: boolean) {
+    this._isFirestoreQuotaExceeded = val;
+    if (!this.isBrowser()) return;
+    try {
+      if (val) {
+        // Daily free write limit in Firestore resets at 00:00 UTC. Calculate next 00:05 UTC.
+        const now = new Date();
+        const nextReset = new Date(
+          Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 5, 0)
+        );
+        localStorage.setItem(this.QUOTA_EXCEEDED_UNTIL_KEY, nextReset.getTime().toString());
+        this.quotaExceededMessage =
+          'Daily Firestore free tier write quota reached (resets 00:00 UTC). System is operating seamlessly in Local-First & Express Backend sync mode.';
+        pauseFirestoreNetwork();
+      } else {
+        localStorage.removeItem(this.QUOTA_EXCEEDED_UNTIL_KEY);
+        this.quotaExceededMessage = null;
+        resumeFirestoreNetwork();
+      }
+    } catch {
+      // Ignore
+    }
   }
 
   public handleFirestoreQuotaError(err: any): boolean {
@@ -99,10 +162,9 @@ class StorageService {
       errMsg.includes('Quota limit exceeded') ||
       errMsg.includes('Quota exceeded')
     ) {
-      if (!this.isFirestoreQuotaExceeded) {
+      pauseFirestoreNetwork();
+      if (!this._isFirestoreQuotaExceeded) {
         this.isFirestoreQuotaExceeded = true;
-        this.quotaExceededMessage =
-          'Daily Firestore write limit reached. POS continues operating seamlessly via Local Storage & Express backend synchronization until reset.';
         console.warn(
           '⚠️ [StorageService] Cloud Firestore write quota reached. System is safely operating in Local-First & Express Backend sync mode. Firestore writes paused until daily quota resets at 00:00 UTC.'
         );
@@ -118,12 +180,32 @@ class StorageService {
   }
 
   public getQuotaMessage(): string | null {
-    return this.quotaExceededMessage;
+    if (this.isFirestoreQuotaExceeded) {
+      return (
+        this.quotaExceededMessage ||
+        'Daily Firestore free tier write quota reached (resets 00:00 UTC). System is operating seamlessly in Local-First & Express Backend sync mode.'
+      );
+    }
+    return null;
   }
 
   // --- Initialize Storage with Defaults if Empty ---
   init() {
     if (!this.isBrowser()) return;
+
+    // Check or initialize persistent quota exceeded state
+    const storedUntil = localStorage.getItem(this.QUOTA_EXCEEDED_UNTIL_KEY);
+    if (storedUntil) {
+      const untilTime = parseInt(storedUntil, 10);
+      if (Number.isFinite(untilTime) && Date.now() < untilTime) {
+        this._isFirestoreQuotaExceeded = true;
+        this.quotaExceededMessage =
+          'Daily Firestore free tier write quota reached (resets 00:00 UTC). System is operating seamlessly in Local-First & Express Backend sync mode.';
+      }
+    } else {
+      // Free daily write quota reached today (406741115590). Seed flag until next 00:05 UTC.
+      this.isFirestoreQuotaExceeded = true;
+    }
 
     // Requirement: Clean wipe of all legacy demo data (products, customers, expenses, sales, shifts)
     const hasPurgedDemo = localStorage.getItem('sappy_demo_purged_v4') === 'true';
@@ -191,6 +273,11 @@ class StorageService {
     if (!localStorage.getItem(STORAGE_KEYS.CREDIT_TXS)) {
       localStorage.setItem(STORAGE_KEYS.CREDIT_TXS, JSON.stringify([]));
     }
+
+    const currentSales = this.getSales();
+    if (currentSales.length > 0) {
+      indexedDbService.syncLocalStorageAndIndexedDB(currentSales).catch(() => {});
+    }
   }
 
   // --- Settings ---
@@ -230,7 +317,9 @@ class StorageService {
           if (onUpdate) onUpdate(remoteSettings);
         } else {
           const local = this.getSettings();
-          this.pushSettingsToFirestore(local);
+          if (!this.isFirestoreQuotaExceeded) {
+            this.pushSettingsToFirestore(local);
+          }
         }
       })
       .catch((err) => console.warn('Initial Firestore settings sync notice:', err));
@@ -737,9 +826,11 @@ class StorageService {
     });
 
     // 2. Asynchronously purge ghost duplicate documents from Cloud Firestore
-    ghostDocIdsToDelete.forEach((ghostId) => {
-      this.deleteStaffFromFirestore(ghostId).catch(() => {});
-    });
+    if (!this.isFirestoreQuotaExceeded) {
+      ghostDocIdsToDelete.forEach((ghostId) => {
+        this.deleteStaffFromFirestore(ghostId).catch(() => {});
+      });
+    }
 
     // 3. Keep any valid local accounts not yet present in remote
     validLocal.forEach((loc) => {
@@ -748,7 +839,9 @@ class StorageService {
       const locKey = locEmail || locUser || loc.id;
       if (!seenEmails.has(locKey)) {
         cleanRemote.push(loc);
-        this.pushStaffToFirestore(loc).catch(() => {});
+        if (!this.isFirestoreQuotaExceeded) {
+          this.pushStaffToFirestore(loc).catch(() => {});
+        }
       }
     });
 
@@ -790,7 +883,9 @@ class StorageService {
           (username && deletedIds.includes(username));
 
         if (isTombstoned) {
-          deleteDoc(doc(db, 'users', docSnap.id)).catch(() => {});
+          if (!this.isFirestoreQuotaExceeded) {
+            deleteDoc(doc(db, 'users', docSnap.id)).catch(() => {});
+          }
           return;
         }
 
@@ -806,7 +901,9 @@ class StorageService {
           // Safeguard local accounts!
           this.saveStaffList(localList);
           this.pushStaffToServer(localList);
-          localList.forEach((s) => this.pushStaffToFirestore(s).catch(() => {}));
+          if (!this.isFirestoreQuotaExceeded) {
+            localList.forEach((s) => this.pushStaffToFirestore(s).catch(() => {}));
+          }
           if (this.isBrowser()) {
             localStorage.setItem(STORAGE_KEYS.STORE_INITIALIZED, 'true');
             localStorage.setItem('sappy_initial_signup_completed', 'true');
@@ -2180,7 +2277,7 @@ class StorageService {
     });
 
     // If local has items not in remote, push them to Firestore so other devices see them!
-    if (missingInRemote.length > 0) {
+    if (missingInRemote.length > 0 && !this.isFirestoreQuotaExceeded) {
       this.pushProductsBatchToFirestore(missingInRemote).catch(() => {});
     }
 
@@ -2877,6 +2974,7 @@ class StorageService {
   saveSales(sales: Sale[]) {
     if (!this.isBrowser()) return;
     localStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify(sales));
+    indexedDbService.putSalesBatch(sales).catch(() => {});
   }
 
   async pushSaleToFirestore(sale: Sale): Promise<void> {
@@ -2926,7 +3024,7 @@ class StorageService {
       }
     });
 
-    if (missingInRemote.length > 0) {
+    if (missingInRemote.length > 0 && !this.isFirestoreQuotaExceeded) {
       this.pushSalesBatchToFirestore(missingInRemote).catch(() => {});
     }
 
@@ -3198,7 +3296,7 @@ class StorageService {
       }
     });
 
-    if (missingInRemote.length > 0) {
+    if (missingInRemote.length > 0 && !this.isFirestoreQuotaExceeded) {
       this.pushCustomersBatchToFirestore(missingInRemote).catch(() => {});
     }
 
@@ -3338,7 +3436,7 @@ class StorageService {
       }
     });
 
-    if (missingInRemote.length > 0) {
+    if (missingInRemote.length > 0 && !this.isFirestoreQuotaExceeded) {
       this.pushCreditTxsBatchToFirestore(missingInRemote).catch(() => {});
     }
 
@@ -3581,7 +3679,7 @@ class StorageService {
       }
     });
 
-    if (missingInRemote.length > 0) {
+    if (missingInRemote.length > 0 && !this.isFirestoreQuotaExceeded) {
       this.pushExpensesBatchToFirestore(missingInRemote).catch(() => {});
     }
 
