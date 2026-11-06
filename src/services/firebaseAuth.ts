@@ -64,28 +64,19 @@ export async function resumeFirestoreNetwork(): Promise<void> {
   }
 }
 
-// Validate connection to Firestore per Firebase integration specifications (if not quota paused)
+// Validate connection to Firestore per Firebase integration specifications
 if (typeof window !== 'undefined') {
-  const isQuotaPaused =
-    localStorage.getItem('sappy_firestore_quota_exceeded_until') &&
-    Number(localStorage.getItem('sappy_firestore_quota_exceeded_until')) > Date.now();
-
-  if (isQuotaPaused) {
-    pauseFirestoreNetwork();
-  } else {
-    getDocFromServer(doc(db, 'system', 'setup')).catch((err) => {
-      const msg = err instanceof Error ? err.message : String(err || '');
-      if (
-        msg.includes('the client is offline') ||
-        msg.includes('resource-exhausted') ||
-        msg.includes('Quota')
-      ) {
-        pauseFirestoreNetwork();
-        return;
-      }
-      console.warn('Firestore initialization notice:', msg);
-    });
-  }
+  getDocFromServer(doc(db, 'system', 'setup')).catch((err) => {
+    const msg = err instanceof Error ? err.message : String(err || '');
+    if (
+      msg.includes('the client is offline') ||
+      msg.includes('resource-exhausted') ||
+      msg.includes('Quota')
+    ) {
+      return;
+    }
+    console.warn('Firestore initialization notice:', msg);
+  });
 }
 
 export interface PasswordResetResult {

@@ -84,13 +84,30 @@ const INITIAL_CUSTOMERS: Customer[] = [];
 const INITIAL_PRODUCTS: Product[] = [];
 
 class StorageService {
-  private _isFirestoreQuotaExceeded: boolean = true;
-  private quotaExceededMessage: string | null =
-    'Daily Firestore free tier write quota reached (resets 00:00 UTC). System is operating seamlessly in Local-First & Express Backend sync mode.';
+  private _isFirestoreQuotaExceeded: boolean = false;
+  private quotaExceededMessage: string | null = null;
   private readonly QUOTA_EXCEEDED_UNTIL_KEY = 'sappy_firestore_quota_exceeded_until';
+  private syncBroadcastChannel: BroadcastChannel | null = null;
 
   private isBrowser(): boolean {
     return typeof window !== 'undefined' && typeof localStorage !== 'undefined';
+  }
+
+  public broadcastSyncMessage(type: string, payload?: any) {
+    if (!this.isBrowser()) return;
+    try {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('sappy-auto-synced', { detail: { type, payload } }));
+        if ('BroadcastChannel' in window) {
+          if (!this.syncBroadcastChannel) {
+            this.syncBroadcastChannel = new BroadcastChannel('sappy_cross_device_sync');
+          }
+          this.syncBroadcastChannel.postMessage({ type, payload, timestamp: Date.now() });
+        }
+      }
+    } catch {
+      // Non-fatal
+    }
   }
 
   public get isFirestoreQuotaExceeded(): boolean {
@@ -102,7 +119,6 @@ class StorageService {
         if (Number.isFinite(untilTime)) {
           if (Date.now() < untilTime) {
             this._isFirestoreQuotaExceeded = true;
-            pauseFirestoreNetwork();
             return true;
           } else {
             // Reset period has passed
@@ -114,15 +130,8 @@ class StorageService {
           }
         }
       }
-      // If not stored yet, seed until next 00:05 UTC (00:00 UTC daily quota reset)
-      const now = new Date();
-      const nextReset = new Date(
-        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 5, 0)
-      );
-      localStorage.setItem(this.QUOTA_EXCEEDED_UNTIL_KEY, nextReset.getTime().toString());
-      this._isFirestoreQuotaExceeded = true;
-      pauseFirestoreNetwork();
-      return true;
+      this._isFirestoreQuotaExceeded = false;
+      return false;
     } catch {
       // Fallback
     }
@@ -201,10 +210,28 @@ class StorageService {
         this._isFirestoreQuotaExceeded = true;
         this.quotaExceededMessage =
           'Daily Firestore free tier write quota reached (resets 00:00 UTC). System is operating seamlessly in Local-First & Express Backend sync mode.';
+      } else {
+        localStorage.removeItem(this.QUOTA_EXCEEDED_UNTIL_KEY);
+        this._isFirestoreQuotaExceeded = false;
       }
     } else {
-      // Free daily write quota reached today (406741115590). Seed flag until next 00:05 UTC.
-      this.isFirestoreQuotaExceeded = true;
+      this._isFirestoreQuotaExceeded = false;
+    }
+
+    // Initialize cross-tab/cross-device BroadcastChannel listener
+    if (this.isBrowser() && 'BroadcastChannel' in window && !this.syncBroadcastChannel) {
+      try {
+        this.syncBroadcastChannel = new BroadcastChannel('sappy_cross_device_sync');
+        this.syncBroadcastChannel.onmessage = (event) => {
+          if (event?.data?.type) {
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('sappy-auto-synced', { detail: event.data }));
+            }
+          }
+        };
+      } catch {
+        // BroadcastChannel fallback
+      }
     }
 
     // Requirement: Clean wipe of all legacy demo data (products, customers, expenses, sales, shifts)
@@ -596,6 +623,13 @@ class StorageService {
         return true;
       }
 
+      if (!s.createdAt) {
+        s.createdAt = new Date().toISOString();
+      }
+      if (!s.updatedAt) {
+        s.updatedAt = new Date().toISOString();
+      }
+
       const uid = (s.id || '').toLowerCase();
       const email = (s.email || '').toLowerCase();
       const username = (s.username || '').toLowerCase();
@@ -623,6 +657,7 @@ class StorageService {
 
     const deduplicated = this.deduplicateStaffList(valid);
     localStorage.setItem(STORAGE_KEYS.STAFF, JSON.stringify(deduplicated));
+    this.broadcastSyncMessage('STAFF_SAVED', deduplicated);
   }
 
   // --- Firebase Cloud Database Cross-Device Synchronization ---
@@ -784,7 +819,6 @@ class StorageService {
 
     // 1. Group remote docs by email/username to detect and eliminate duplicate Firestore documents
     const seenEmails = new Map<string, string>(); // normalizedKey -> canonicalDocId
-    const ghostDocIdsToDelete: string[] = [];
     const cleanRemote: Staff[] = [];
 
     // Sort remoteStaff so newer documents are preferred as canonical
@@ -806,13 +840,12 @@ class StorageService {
         (username && deletedIds.includes(username));
 
       if (isTombstoned) {
-        ghostDocIdsToDelete.push(r.id);
         return;
       }
 
       if (seenEmails.has(key)) {
-        // Redundant duplicate document in Cloud Firestore! Mark for deletion
-        ghostDocIdsToDelete.push(r.id);
+        // Redundant duplicate document in memory: skip to keep only the newest
+        return;
       } else {
         seenEmails.set(key, r.id);
         const localMatch = validLocal.find(
@@ -825,27 +858,17 @@ class StorageService {
       }
     });
 
-    // 2. Asynchronously purge ghost duplicate documents from Cloud Firestore
-    if (!this.isFirestoreQuotaExceeded) {
-      ghostDocIdsToDelete.forEach((ghostId) => {
-        this.deleteStaffFromFirestore(ghostId).catch(() => {});
-      });
-    }
-
-    // 3. Keep any valid local accounts not yet present in remote
+    // 2. Keep any valid local accounts not yet present in remote
     validLocal.forEach((loc) => {
       const locEmail = (loc.email || '').trim().toLowerCase();
       const locUser = (loc.username || '').trim().toLowerCase();
       const locKey = locEmail || locUser || loc.id;
       if (!seenEmails.has(locKey)) {
         cleanRemote.push(loc);
-        if (!this.isFirestoreQuotaExceeded) {
-          this.pushStaffToFirestore(loc).catch(() => {});
-        }
       }
     });
 
-    // 4. Strict deduplication & sequential employee IDs assignment
+    // 3. Strict deduplication & sequential employee IDs assignment
     const staffList = this.deduplicateStaffList(cleanRemote);
     this.saveStaffList(staffList);
 
@@ -883,9 +906,7 @@ class StorageService {
           (username && deletedIds.includes(username));
 
         if (isTombstoned) {
-          if (!this.isFirestoreQuotaExceeded) {
-            deleteDoc(doc(db, 'users', docSnap.id)).catch(() => {});
-          }
+          // A read listener must NEVER delete documents from Firestore!
           return;
         }
 
@@ -956,7 +977,11 @@ class StorageService {
       }
 
       if (wipeTs > 0) {
-        const t = s.createdAt ? new Date(s.createdAt).getTime() : 0;
+        const t = s.createdAt
+          ? new Date(s.createdAt).getTime()
+          : s.updatedAt
+          ? new Date(s.updatedAt).getTime()
+          : 0;
         return t > wipeTs;
       }
       return true;
@@ -1025,9 +1050,23 @@ class StorageService {
 
     this.pushStaffToServer(deduplicated);
     this.pushStaffToFirestore(newStaff);
+    this.broadcastSyncMessage('STAFF_ADDED', newStaff);
   }
 
   updateStaffAccount(updatedStaff: Staff) {
+    updatedStaff.updatedAt = new Date().toISOString();
+    const cleanId = (updatedStaff.id || '').trim().toLowerCase();
+    const cleanEmail = (updatedStaff.email || '').trim().toLowerCase();
+    const cleanUsername = (updatedStaff.username || '').trim().toLowerCase();
+
+    const curDeleted = this.getDeletedUserIds();
+    const filteredDeleted = curDeleted.filter(
+      (d) => d !== cleanId && d !== cleanEmail && d !== cleanUsername
+    );
+    if (filteredDeleted.length !== curDeleted.length) {
+      this.setDeletedUserIds(filteredDeleted);
+    }
+
     const list = this.getStaffList();
     const idx = list.findIndex(
       (s) =>
@@ -1043,15 +1082,17 @@ class StorageService {
     } else {
       list.push(updatedStaff);
     }
-    this.saveStaffList(list);
+    const deduplicated = this.deduplicateStaffList(list);
+    this.saveStaffList(deduplicated);
     if (this.isBrowser()) {
-      if (updatedStaff.role === 'admin' || list.length > 0) {
+      if (updatedStaff.role === 'admin' || deduplicated.length > 0) {
         localStorage.setItem(STORAGE_KEYS.STORE_INITIALIZED, 'true');
         localStorage.setItem('sappy_initial_signup_completed', 'true');
       }
     }
-    this.pushStaffToServer(list);
+    this.pushStaffToServer(deduplicated);
     this.pushStaffToFirestore(updatedStaff);
+    this.broadcastSyncMessage('STAFF_UPDATED', updatedStaff);
   }
 
   approveStaff(staffId: string, approverName: string = 'Administrator') {
@@ -1174,9 +1215,7 @@ class StorageService {
     // 5. Push remaining to server sync with deletedUserIds
     this.pushStaffToServer(remaining);
 
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('sappy-auto-synced'));
-    }
+    this.broadcastSyncMessage('STAFF_DELETED', { staffId: target.id });
     return true;
   }
 
@@ -2136,11 +2175,13 @@ class StorageService {
         }).catch(() => {});
       }
     } catch {}
+    this.broadcastSyncMessage('PRODUCTS_UPDATED', products);
   }
 
   saveProductsLocally(products: Product[]) {
     if (!this.isBrowser()) return;
     localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
+    this.broadcastSyncMessage('PRODUCTS_UPDATED', products);
   }
 
   // --- Firebase Cloud Database Cross-Device Product Synchronization ---
@@ -2275,11 +2316,6 @@ class StorageService {
         }
       }
     });
-
-    // If local has items not in remote, push them to Firestore so other devices see them!
-    if (missingInRemote.length > 0 && !this.isFirestoreQuotaExceeded) {
-      this.pushProductsBatchToFirestore(missingInRemote).catch(() => {});
-    }
 
     // Merged list: valid remote products plus any local items pending upload
     const merged: Product[] = [...validRemote, ...missingInRemote];
@@ -2975,6 +3011,7 @@ class StorageService {
     if (!this.isBrowser()) return;
     localStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify(sales));
     indexedDbService.putSalesBatch(sales).catch(() => {});
+    this.broadcastSyncMessage('SALES_UPDATED', sales);
   }
 
   async pushSaleToFirestore(sale: Sale): Promise<void> {
@@ -3023,10 +3060,6 @@ class StorageService {
         missingInRemote.push(local);
       }
     });
-
-    if (missingInRemote.length > 0 && !this.isFirestoreQuotaExceeded) {
-      this.pushSalesBatchToFirestore(missingInRemote).catch(() => {});
-    }
 
     const mergedMap = new Map<string, Sale>();
     validRemote.forEach((s) => mergedMap.set(s.id, s));
@@ -3296,10 +3329,6 @@ class StorageService {
       }
     });
 
-    if (missingInRemote.length > 0 && !this.isFirestoreQuotaExceeded) {
-      this.pushCustomersBatchToFirestore(missingInRemote).catch(() => {});
-    }
-
     const mergedMap = new Map<string, Customer>();
     validRemote.forEach((c) => mergedMap.set(c.id, c));
     missingInRemote.forEach((c) => mergedMap.set(c.id, c));
@@ -3373,6 +3402,7 @@ class StorageService {
         }).catch(() => {});
       }
     } catch {}
+    this.broadcastSyncMessage('CUSTOMERS_UPDATED', customers);
   }
 
   saveCustomer(customer: Customer, isNew: boolean) {
@@ -3435,10 +3465,6 @@ class StorageService {
         missingInRemote.push(local);
       }
     });
-
-    if (missingInRemote.length > 0 && !this.isFirestoreQuotaExceeded) {
-      this.pushCreditTxsBatchToFirestore(missingInRemote).catch(() => {});
-    }
 
     const mergedMap = new Map<string, CreditTransaction>();
     validRemote.forEach((t) => mergedMap.set(t.id, t));
@@ -3679,10 +3705,6 @@ class StorageService {
       }
     });
 
-    if (missingInRemote.length > 0 && !this.isFirestoreQuotaExceeded) {
-      this.pushExpensesBatchToFirestore(missingInRemote).catch(() => {});
-    }
-
     const mergedMap = new Map<string, StoreExpense>();
     validRemote.forEach((e) => mergedMap.set(e.id, e));
     missingInRemote.forEach((e) => mergedMap.set(e.id, e));
@@ -3793,6 +3815,7 @@ class StorageService {
     } catch {
       this.enqueueSync('expense', 'create', newExpense);
     }
+    this.broadcastSyncMessage('EXPENSES_UPDATED', newExpense);
     return newExpense;
   }
 
@@ -4072,7 +4095,7 @@ class StorageService {
     const settings = this.getSettings();
     return settings.autoSyncIntervalSeconds && settings.autoSyncIntervalSeconds >= 5
       ? settings.autoSyncIntervalSeconds
-      : 60;
+      : 10;
   }
 
   setAutoSyncInterval(seconds: number): void {

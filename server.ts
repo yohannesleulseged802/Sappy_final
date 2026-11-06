@@ -1161,6 +1161,23 @@ app.post('/api/pos/sync', (req: Request, res: Response) => {
     }
   }
 
+  // If incomingUsers contains active users, immediately remove them from deletedUserIds tombstones
+  if (Array.isArray(incomingUsers) && incomingUsers.length > 0) {
+    const activeEmails = new Set(incomingUsers.map((u: any) => (u.email || '').trim().toLowerCase()).filter(Boolean));
+    const activeUsers = new Set(incomingUsers.map((u: any) => (u.username || '').trim().toLowerCase()).filter(Boolean));
+    const activeUids = new Set(incomingUsers.map((u: any) => (u.uid || u.id || '').trim().toLowerCase()).filter(Boolean));
+
+    const cur = (meta.deletedUserIds || []).map((x: string) => x.toLowerCase());
+    const untombstoned = cur.filter((id: string) => !activeEmails.has(id) && !activeUsers.has(id) && !activeUids.has(id));
+    if (untombstoned.length !== cur.length) {
+      meta = {
+        ...meta,
+        deletedUserIds: untombstoned,
+      };
+      saveSystemMeta(meta);
+    }
+  }
+
   const deletedIds = (meta.deletedUserIds || []).map((id) => id.toLowerCase());
 
   let mergedUsersSafe: any[] = [];

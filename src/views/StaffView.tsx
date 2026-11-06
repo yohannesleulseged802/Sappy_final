@@ -103,22 +103,24 @@ export const StaffView: React.FC<StaffViewProps> = ({
       return;
     }
 
-    let updatedList: Staff[];
     if (editingStaff) {
-      updatedList = staffList.map((s) =>
-        s.id === editingStaff.id
-          ? {
-              ...s,
-              name: name.trim(),
-              email: email.trim(),
-              phone: phone.trim() || undefined,
-              jobTitle: jobTitle.trim() || undefined,
-              role,
-              pin,
-            }
-          : s
-      );
+      const updatedStaff: Staff = {
+        ...editingStaff,
+        name: name.trim(),
+        firstName: name.trim().split(' ')[0] || editingStaff.firstName,
+        lastName: name.trim().split(' ').slice(1).join(' ') || editingStaff.lastName,
+        email: email.trim(),
+        phone: phone.trim() || undefined,
+        jobTitle: jobTitle.trim() || undefined,
+        role,
+        pin,
+        updatedAt: new Date().toISOString(),
+      };
+      storage.updateStaffAccount(updatedStaff);
       storage.addAuditLog('STAFF_UPDATED', 'AUTH', `Staff account ${name} updated by ${currentStaff.name}.`);
+      if (editingStaff.id === currentStaff.id) {
+        storage.setCurrentStaff(editingStaff.id);
+      }
     } else {
       const cleanEmail = (email.trim() || `${name.toLowerCase().replace(/\s+/g, '')}@sappystationary.com`).toLowerCase();
       const existingMatch = staffList.find((s) => s.email && s.email.toLowerCase() === cleanEmail);
@@ -131,15 +133,22 @@ export const StaffView: React.FC<StaffViewProps> = ({
         id: `staff-${Date.now()}`,
         employeeId: storage.generateNextEmployeeId(staffList),
         name: name.trim(),
+        firstName: name.trim().split(' ')[0] || '',
+        lastName: name.trim().split(' ').slice(1).join(' ') || '',
+        username: cleanEmail.split('@')[0].toLowerCase(),
         email: cleanEmail,
         phone: phone.trim() || undefined,
-        jobTitle: jobTitle.trim() || undefined,
+        jobTitle: jobTitle.trim() || 'POS Cashier',
+        department: 'Retail & Print Operations',
         role,
         pin,
         active: true,
         approvalStatus: 'approved',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       };
-      updatedList = [...staffList, newStaff];
+
+      storage.addStaffAccount(newStaff);
       storage.addAuditLog(
         'STAFF_CREATED',
         'AUTH',
@@ -147,11 +156,7 @@ export const StaffView: React.FC<StaffViewProps> = ({
       );
     }
 
-    storage.saveStaffList(updatedList);
-    if (editingStaff && editingStaff.id === currentStaff.id) {
-      storage.setCurrentStaff(editingStaff.id);
-    }
-    // Sync update to server
+    // Sync profile details to server
     try {
       fetch('/api/auth/update-profile', {
         method: 'POST',
